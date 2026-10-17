@@ -12,8 +12,9 @@ import streamlit as st
 
 from opsguard.approval import approve
 from opsguard.audit import AuditEvent, AuditLog
-from opsguard.decider_client import DeciderClient, DeciderUnavailable
-from opsguard.safety_engine import Decision, Evaluation, POLICY_RULES, evaluate_command
+from opsguard.decider_client import DeciderClient
+from opsguard.decision_pipeline import PipelineDecision, decide
+from opsguard.safety_engine import Decision, Evaluation, POLICY_RULES
 from opsguard.simulator import simulate
 
 AUDIT = AuditLog()
@@ -73,15 +74,10 @@ def overview(client: DeciderClient) -> None:
 
 
 def _evaluate(command: str, environment: str, resource: str, client: DeciderClient) -> None:
-    evaluation = evaluate_command(command)
-    available, detail = False, "AI classification unavailable; deterministic policy was used."
-    try:
-        model = client.classify(command)
-        available, detail = model.available, model.detail
-    except DeciderUnavailable as exc:
-        detail = str(exc)
-    st.session_state.update(evaluation=evaluation, evaluation_context=(command, environment, resource), approval=None, decider_available=available, model_detail=detail)
-    AUDIT.record(evaluation, decider_available=available, environment=environment, resource_name=resource)
+    pipeline = decide(command, client)
+    evaluation = pipeline.final
+    st.session_state.update(evaluation=evaluation, pipeline=pipeline, evaluation_context=(command, environment, resource), approval=None, decider_available=pipeline.decider_status == "DECIDER_USED", model_detail=pipeline.decider_status)
+    AUDIT.record(evaluation, decider_available=pipeline.decider_status == "DECIDER_USED", environment=environment, resource_name=resource, pipeline=pipeline)
 
 
 def playground(client: DeciderClient) -> None:
@@ -97,6 +93,7 @@ def playground(client: DeciderClient) -> None:
         with st.spinner("Applying deterministic safety policy…"):
             _evaluate(command, environment, resource, client)
     evaluation: Evaluation | None = st.session_state.get("evaluation")
+    pipeline: PipelineDecision | None = st.session_state.get("pipeline")
     if evaluation is None:
         st.info("Enter a command or load an example. Unknown and malformed commands fail closed.")
         return
@@ -114,9 +111,13 @@ def playground(client: DeciderClient) -> None:
         st.write(f"**Recommended next step:** {next_step}")
     with two:
         st.subheader("Classification sources")
-        st.metric("Deterministic policy", evaluation.decision.value)
-        st.caption(st.session_state.get("model_detail", "Not evaluated."))
-        st.caption("Model signals never override deterministic policy.")
+        st.metric("Deterministic policy", pipeline.deterministic.decision.value if pipeline else "—")
+        st.caption(f"Decider: {pipeline.decider_status if pipeline else 'not evaluated'}")
+        if pipeline and pipeline.model_verdict:
+            st.caption(f"Model verdict: {pipeline.model_verdict.value}; confidence: {pipeline.model_confidence:.2f}")
+        elif pipeline and pipeline.failure_reason:
+            st.caption(pipeline.failure_reason)
+        st.caption("The final verdict is the stricter deterministic/model result; hard blocks never call the model.")
     st.code(evaluation.normalized_command or evaluation.command, language="bash")
     if not context_matches:
         return
@@ -125,7 +126,7 @@ def playground(client: DeciderClient) -> None:
     elif evaluation.decision is Decision.SAFE:
         if st.button("Record safe simulation"):
             result = simulate(evaluation, environment=environment, resource_name=resource)
-            AUDIT.record(evaluation, decider_available=st.session_state["decider_available"], approval_outcome="not-required", simulation_result=result.message, environment=environment, resource_name=resource)
+            AUDIT.record(evaluation, decider_available=st.session_state["decider_available"], approval_outcome="not-required", simulation_result=result.message, environment=environment, resource_name=resource, pipeline=pipeline)
             st.success(result.message)
     else:
         st.subheader("Human approval required")
@@ -134,10 +135,10 @@ def playground(client: DeciderClient) -> None:
             try:
                 approval = approve(evaluation, environment, resource, confirmation)
                 result = simulate(evaluation, approval, environment=environment, resource_name=resource)
-                AUDIT.record(evaluation, decider_available=st.session_state["decider_available"], approval_outcome="approved", confirmation_outcome="matched", simulation_result=result.message, environment=environment, resource_name=resource)
+                AUDIT.record(evaluation, decider_available=st.session_state["decider_available"], approval_outcome="approved", confirmation_outcome="matched", simulation_result=result.message, environment=environment, resource_name=resource, pipeline=pipeline)
                 st.success(result.message)
             except ValueError as exc:
-                AUDIT.record(evaluation, decider_available=st.session_state["decider_available"], approval_outcome="denied", confirmation_outcome="not-matched", environment=environment, resource_name=resource)
+                AUDIT.record(evaluation, decider_available=st.session_state["decider_available"], approval_outcome="denied", confirmation_outcome="not-matched", environment=environment, resource_name=resource, pipeline=pipeline)
                 st.error(str(exc))
 
 
@@ -148,7 +149,7 @@ def policy_details() -> None:
     if query:
         rows = [row for row in rows if query.lower() in " ".join(map(str, row.values())).lower()]
     st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-    st.info("Optional Decider output is untrusted and cannot downgrade BLOCK or authorize an action.")
+    st.info("Decider classifications can only escalate the deterministic result and never authorize an action.")
 
 
 def audit_explorer() -> None:

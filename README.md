@@ -1,6 +1,6 @@
 # OpsGuard
 
-OpsGuard is a local, **simulation-only** DevSecOps command-safety dashboard. It never invokes a shell, cloud SDK, Kubernetes client, database driver, or infrastructure operation. The deterministic policy is authoritative; optional local Strands Decider output is informational and can never override a deterministic `BLOCK`.
+OpsGuard is a local, **simulation-only** DevSecOps command-safety dashboard. It never invokes a shell, cloud SDK, Kubernetes client, database driver, or infrastructure operation. A deterministic policy supplies a hard safety floor; a local Strands Decider classification can make a result stricter but can never downgrade it.
 
 ## Setup and run
 
@@ -47,22 +47,40 @@ To capture a screenshot for documentation, run the dashboard locally, select **S
 
 ## Architecture
 
+```mermaid
+flowchart LR
+    C[Proposed command] --> P[Conservative parser and deterministic policy]
+    P -->|Hard BLOCK| B[BLOCK: model is not called]
+    P -->|SAFE or REVIEW| D[Local POST /v1/systemone choice request]
+    D --> V[Validate choice, probabilities, confidence]
+    V --> F[Stricter of policy and Decider verdict]
+    F -->|REVIEW| A[Exact command + environment + resource approval]
+    F --> S[Simulation record only]
+```
+
 - `opsguard/safety_engine.py`: strict `shlex` parsing, explicit read-only allowlist, deterministic blocks, and fail-closed handling of shell syntax and unknown commands.
-- `opsguard/decider_client.py`: optional `STRANDS_DECIDER_URL` client for `POST /v1/systemone`; validates `state`, `model`, and typed `noul`/`choice` protocol responses.
+- `opsguard/decider_client.py`: `STRANDS_DECIDER_URL` client for the typed `POST /v1/systemone` `choice` response, including its documented class probabilities and confidence.
+- `opsguard/decision_pipeline.py`: applies the hard deterministic floor, calls Decider only after that floor passes, and selects the strictest valid verdict.
 - `opsguard/approval.py`: command fingerprinting plus exact environment/resource binding for REVIEW approvals.
 - `opsguard/simulator.py`: creates messages only; it contains no process-execution call.
 - `opsguard/audit.py`: parameterized SQLite event log (`opsguard_audit.sqlite3`) with backward-compatible environment/resource migration, filtering, metrics, and common secret-assignment redaction.
 - `app.py`: enterprise-style Streamlit dashboard with sidebar navigation.
 
-## Optional local Decider
+## Local Decider decision flow
 
-OpsGuard works without a model server. To use the optional local signal, set `STRANDS_DECIDER_URL` (default `http://127.0.0.1:8099`) and run a compatible local Strands Decider server. The upstream command is:
+For non-hard-blocked commands, OpsGuard asks the local Decider to choose exactly one of `safe`, `review`, or `block`. It accepts only a valid typed `choice` answer with all three probabilities summing to one and a documented `confidence` in `[0, 1]`. The displayed confidence is supplied by Decider; OpsGuard does not calibrate or manufacture it.
+
+Set `STRANDS_DECIDER_URL` to configure the service (default `http://127.0.0.1:8099`) and run a compatible local Strands Decider server separately. If its optional API-key protection is enabled, set `STRANDS_DECIDER_API_KEY`; OpsGuard sends it only as a Bearer authorization header and never writes it to the audit log. The upstream command is:
 
 ```bash
 ~/cybershield-ai/.venv/bin/strands-decider serve StrandsAgents/strands-decider-2B-qwen3.5-v1-2610 --port 8099
 ```
 
-It may download/load a large model, so it is intentionally not started by OpsGuard or this setup. A server outage or malformed response is recorded as unavailable; deterministic offline policy continues.
+It may download/load a large model, so it is intentionally not started by OpsGuard or this setup. With the server offline, OpsGuard records `DECIDER_OFFLINE` and applies the deterministic result: hard blocks still block and REVIEW still requires exact approval. A malformed Decider response is `DECIDER_INVALID` and fails closed to BLOCK. Offline mode never claims that a model decision was made.
+
+## Eligibility status
+
+This repository is public and owned by the GitHub account shown in its remote. That does **not** verify ownership of any Builder Center listing, hackathon eligibility, organizer approval, submission deadline, or visibility requirement. No authoritative event rules or Builder Center record are stored in this repository. Confirm those details directly with the event organizer or Builder Center before submitting.
 
 ## Security limitations
 
@@ -75,4 +93,4 @@ python -m pytest -q
 python -m compileall -q app.py opsguard tests
 ```
 
-The test suite covers deterministic decisions, shell-obfuscation blocks, Decider timeout and schema fallback, approval binding, simulation-only behavior, and audit persistence/redaction. Streamlit may require a normal local terminal to bind its HTTP port.
+The test suite covers deterministic decisions, shell-obfuscation blocks, valid/invalid Decider choice responses, strict verdict combination, offline fallback, approval binding, simulation-only behavior, and audit persistence/redaction. Streamlit may require a normal local terminal to bind its HTTP port.

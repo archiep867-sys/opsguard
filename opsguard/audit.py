@@ -10,7 +10,9 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .decision_pipeline import PipelineDecision
 from .safety_engine import Evaluation
+from .bedrock_client import ExplanationResult
 
 
 @dataclass(frozen=True)
@@ -28,6 +30,22 @@ class AuditEvent:
     approval_outcome: str | None
     confirmation_outcome: str | None
     simulation_result: str | None
+    deterministic_decision: str | None
+    matched_rule_ids: str | None
+    decider_called: bool
+    decider_status: str | None
+    model_verdict: str | None
+    model_confidence: float | None
+    model_probabilities: str | None
+    decision_source: str | None
+    decider_latency_ms: float | None
+    decider_failure_reason: str | None
+    bedrock_invoked: bool
+    bedrock_model_id: str | None
+    bedrock_status: str | None
+    explanation_source: str | None
+    bedrock_latency_ms: float | None
+    bedrock_error_category: str | None
 
 
 _SECRET = re.compile(r"(?i)(?:api[_-]?key|token|password|secret)\s*(?:=|:)\s*[^\s]+")
@@ -57,18 +75,54 @@ class AuditLog:
                 conn.execute("ALTER TABLE audit_events ADD COLUMN environment TEXT")
             if "resource_name" not in columns:
                 conn.execute("ALTER TABLE audit_events ADD COLUMN resource_name TEXT")
+            additions = {
+                "deterministic_decision": "TEXT",
+                "matched_rule_ids": "TEXT",
+                "decider_called": "INTEGER NOT NULL DEFAULT 0",
+                "decider_status": "TEXT",
+                "model_verdict": "TEXT",
+                "model_confidence": "REAL",
+                "model_probabilities": "TEXT",
+                "decision_source": "TEXT",
+                "decider_latency_ms": "REAL",
+                "decider_failure_reason": "TEXT",
+                "bedrock_invoked": "INTEGER NOT NULL DEFAULT 0",
+                "bedrock_model_id": "TEXT",
+                "bedrock_status": "TEXT",
+                "explanation_source": "TEXT",
+                "bedrock_latency_ms": "REAL",
+                "bedrock_error_category": "TEXT",
+            }
+            for column, kind in additions.items():
+                if column not in columns:
+                    conn.execute(f"ALTER TABLE audit_events ADD COLUMN {column} {kind}")
 
     def record(self, evaluation: Evaluation, *, decider_available: bool, approval_outcome: str | None = None,
                confirmation_outcome: str | None = None, simulation_result: str | None = None,
-               environment: str | None = None, resource_name: str | None = None) -> None:
+               environment: str | None = None, resource_name: str | None = None,
+               pipeline: PipelineDecision | None = None,
+               explanation: ExplanationResult | None = None) -> None:
+        deterministic = pipeline.deterministic if pipeline else evaluation
         with sqlite3.connect(self.path) as conn:
             conn.execute("""INSERT INTO audit_events
                 (created_at, command, normalized_command, decision, category, reasons, decider_available,
-                 approval_outcome, confirmation_outcome, simulation_result, environment, resource_name)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 approval_outcome, confirmation_outcome, simulation_result, environment, resource_name,
+                 deterministic_decision, matched_rule_ids, decider_called, decider_status, model_verdict,
+                 model_confidence, model_probabilities, decision_source, decider_latency_ms, decider_failure_reason,
+                 bedrock_invoked, bedrock_model_id, bedrock_status, explanation_source, bedrock_latency_ms,
+                 bedrock_error_category)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (datetime.now(UTC).isoformat(), _redact(evaluation.command), _redact(evaluation.normalized_command or "") or None,
                  evaluation.decision.value, evaluation.category, json.dumps(evaluation.reasons), int(decider_available),
-                 approval_outcome, confirmation_outcome, simulation_result, environment or None, resource_name or None))
+                 approval_outcome, confirmation_outcome, simulation_result, environment or None, resource_name or None,
+                 deterministic.decision.value, json.dumps(deterministic.rule_ids), int(pipeline.decider_called) if pipeline else 0,
+                 pipeline.decider_status if pipeline else None, pipeline.model_verdict.value if pipeline and pipeline.model_verdict else None,
+                 pipeline.model_confidence if pipeline else None, json.dumps(pipeline.model_probabilities) if pipeline and pipeline.model_probabilities else None,
+                 pipeline.source if pipeline else "deterministic policy", pipeline.latency_ms if pipeline else None,
+                 _redact(pipeline.failure_reason) if pipeline and pipeline.failure_reason else None,
+                 int(explanation is not None and explanation.source == "bedrock"), explanation.model_id if explanation else None,
+                 explanation.status if explanation else None, explanation.source if explanation else None,
+                 explanation.latency_ms if explanation else None, explanation.error_category if explanation else None))
 
     def recent(self, limit: int = 100) -> list[tuple[object, ...]]:
         with sqlite3.connect(self.path) as conn:
@@ -91,7 +145,10 @@ class AuditLog:
         where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
         query = """SELECT id, created_at, command, normalized_command, decision, category, reasons,
                    decider_available, environment, resource_name, approval_outcome, confirmation_outcome,
-                   simulation_result FROM audit_events""" + where + " ORDER BY id DESC LIMIT ?"
+                   simulation_result, deterministic_decision, matched_rule_ids, decider_called, decider_status,
+                   model_verdict, model_confidence, model_probabilities, decision_source, decider_latency_ms,
+                   decider_failure_reason, bedrock_invoked, bedrock_model_id, bedrock_status, explanation_source,
+                   bedrock_latency_ms, bedrock_error_category FROM audit_events""" + where + " ORDER BY id DESC LIMIT ?"
         values.append(limit)
         with sqlite3.connect(self.path) as conn:
             return [AuditEvent(*row) for row in conn.execute(query, values).fetchall()]

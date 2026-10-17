@@ -22,6 +22,7 @@ class Evaluation:
     category: str
     reasons: tuple[str, ...]
     confidence: float | None
+    rule_ids: tuple[str, ...] = ()
 
     @property
     def human_approval_required(self) -> bool:
@@ -43,51 +44,51 @@ POLICY_RULES = (
 )
 
 
-def _blocked(command: str, category: str, reason: str) -> Evaluation:
-    return Evaluation(command, None, Decision.BLOCK, category, (reason,), 1.0)
+def _blocked(command: str, category: str, reason: str, rule_id: str) -> Evaluation:
+    return Evaluation(command, None, Decision.BLOCK, category, (reason,), 1.0, (rule_id,))
 
 
 def evaluate_command(command: str) -> Evaluation:
     """Classify a single command without invoking a shell; uncertainty blocks it."""
     if not isinstance(command, str) or not command.strip():
-        return _blocked(str(command), "malformed", "Command is empty or malformed.")
+        return _blocked(str(command), "malformed", "Command is empty or malformed.", "BLOCK-003")
     if "\x00" in command or _SHELL_SYNTAX.search(command):
-        return _blocked(command, "shell-syntax", "Shell chaining, redirection, substitution, or obfuscation is prohibited.")
+        return _blocked(command, "shell-syntax", "Shell chaining, redirection, substitution, or obfuscation is prohibited.", "BLOCK-001")
     try:
         parts = shlex.split(command, posix=True)
     except ValueError:
-        return _blocked(command, "malformed", "Command could not be parsed safely.")
+        return _blocked(command, "malformed", "Command could not be parsed safely.", "BLOCK-003")
     if not parts:
-        return _blocked(command, "malformed", "Command is empty or malformed.")
+        return _blocked(command, "malformed", "Command is empty or malformed.", "BLOCK-003")
     normalized = " ".join(parts)
     program = parts[0].lower()
     lower = [part.lower() for part in parts]
 
     if program == "rm" and any(flag in {"-r", "-f", "-rf", "-fr", "--recursive", "--force"} for flag in lower):
-        return _blocked(command, "destructive", "Recursive or forced file deletion is prohibited.")
+        return _blocked(command, "destructive", "Recursive or forced file deletion is prohibited.", "BLOCK-002")
     if program == "terraform" and len(lower) > 1 and lower[1] == "destroy":
-        return _blocked(command, "destructive", "Terraform destroy is prohibited.")
+        return _blocked(command, "destructive", "Terraform destroy is prohibited.", "BLOCK-002")
     if program == "kubectl" and len(lower) > 1 and lower[1] == "delete":
-        return _blocked(command, "destructive", "Kubernetes deletion is prohibited.")
+        return _blocked(command, "destructive", "Kubernetes deletion is prohibited.", "BLOCK-002")
     if program in {"sql", "psql", "mysql", "sqlite3"} and re.search(
         r"\b(?:drop|truncate|delete)\b", " ".join(lower)
     ):
-        return _blocked(command, "destructive", "Destructive database statements are prohibited.")
+        return _blocked(command, "destructive", "Destructive database statements are prohibited.", "BLOCK-002")
     if program in {"aws", "gcloud", "az"} and any(
         word in {"delete", "terminate", "destroy"}
         or word.startswith(("delete-", "terminate-", "destroy-"))
         for word in lower
     ):
-        return _blocked(command, "destructive", "Cloud resource deletion is prohibited.")
+        return _blocked(command, "destructive", "Cloud resource deletion is prohibited.", "BLOCK-002")
 
     if normalized in _SAFE_EXACT:
-        return Evaluation(command, normalized, Decision.SAFE, "read-only", ("Explicit read-only allowlist match.",), 1.0)
+        return Evaluation(command, normalized, Decision.SAFE, "read-only", ("Explicit read-only allowlist match.",), 1.0, ("SAFE-001",))
     if program == "ls" and all(not arg.startswith("-") or arg in {"-a", "-l", "-la", "-al", "-h"} for arg in parts[1:]):
-        return Evaluation(command, normalized, Decision.SAFE, "read-only", ("Read-only directory listing.",), 0.98)
+        return Evaluation(command, normalized, Decision.SAFE, "read-only", ("Read-only directory listing.",), 0.98, ("SAFE-001",))
     if parts[:2] == ["git", "status"] and len(parts) <= 3:
-        return Evaluation(command, normalized, Decision.SAFE, "read-only", ("Read-only Git status.",), 0.98)
+        return Evaluation(command, normalized, Decision.SAFE, "read-only", ("Read-only Git status.",), 0.98, ("SAFE-001",))
     if program == "kubectl" and len(parts) >= 2 and parts[1] in {"get", "describe"}:
-        return Evaluation(command, normalized, Decision.SAFE, "read-only", ("Read-only Kubernetes query.",), 0.95)
+        return Evaluation(command, normalized, Decision.SAFE, "read-only", ("Read-only Kubernetes query.",), 0.95, ("SAFE-002",))
 
     if program == "kubectl" and len(parts) >= 2 and parts[1] in {"apply", "patch", "scale", "rollout", "edit"}:
         reason = f"Kubernetes {parts[1]} changes cluster state."
@@ -98,5 +99,5 @@ def evaluate_command(command: str) -> Evaluation:
     elif program in {"cp", "mv", "touch", "mkdir", "tee", "sed", "python", "python3"}:
         reason = "Command can modify files or execute code and requires human review."
     else:
-        return _blocked(command, "unknown", "Command is not in the explicit read-only allowlist.")
-    return Evaluation(command, normalized, Decision.REVIEW, "mutation", (reason,), 0.75)
+        return _blocked(command, "unknown", "Command is not in the explicit read-only allowlist.", "BLOCK-003")
+    return Evaluation(command, normalized, Decision.REVIEW, "mutation", (reason,), 0.75, ("REVIEW-001",))
