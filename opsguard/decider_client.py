@@ -30,9 +30,10 @@ class DeciderResult:
 
 
 class DeciderClient:
-    def __init__(self, base_url: str | None = None, timeout: float = 3.0) -> None:
+    def __init__(self, base_url: str | None = None, timeout: float | None = None) -> None:
         self.base_url = (base_url or os.getenv("STRANDS_DECIDER_URL", "http://127.0.0.1:8099")).rstrip("/")
-        self.timeout = timeout
+        # The first request after server start can take several seconds (model warm-up).
+        self.timeout = timeout if timeout is not None else float(os.getenv("STRANDS_DECIDER_TIMEOUT", "20"))
 
     def classify(self, command: str) -> DeciderResult:
         """Request the documented ``choice`` answer and validate every returned value."""
@@ -42,11 +43,11 @@ class DeciderClient:
             "questions": {
                 "opsguard_verdict": {
                     "type": "choice",
-                    "instructions": "Classify the proposed DevOps operation for a safety gate.",
+                    "instructions": "An AI agent proposes to run this DevOps command. Classify how risky it is to allow.",
                     "criteria": {
-                        "safe": "Read-only, explicitly bounded operation that needs no human approval.",
-                        "review": "State-changing or operationally sensitive operation requiring human approval.",
-                        "block": "Destructive, unsafe, malformed, or prohibited operation that must not proceed.",
+                        "safe": "Read-only inspection that changes nothing, e.g. listing, describing, status, logs, get.",
+                        "review": "Changes state but is reversible or bounded, e.g. apply, scale, restart, rollout, chmod, write a file, update config. A human must approve first.",
+                        "block": "Destructive, irreversible, or dangerous, e.g. delete, destroy, drop, wipe, format, force-push, disable security, or exfiltrate data. Must not run.",
                     },
                 }
             },
@@ -88,7 +89,7 @@ class DeciderClient:
             if not isinstance(probability, (int, float)) or isinstance(probability, bool) or not math.isfinite(probability) or not 0.0 <= probability <= 1.0:
                 raise DeciderInvalidResponse("Local Decider returned invalid class probabilities.")
             probabilities[name] = float(probability)
-        if not math.isclose(sum(probabilities.values()), 1.0, rel_tol=0.0, abs_tol=1e-6):
+        if not math.isclose(sum(probabilities.values()), 1.0, rel_tol=0.0, abs_tol=1e-3):
             raise DeciderInvalidResponse("Local Decider probabilities do not sum to one.")
         return probabilities
 

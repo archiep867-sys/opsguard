@@ -13,6 +13,7 @@ from pathlib import Path
 from .decision_pipeline import PipelineDecision
 from .safety_engine import Evaluation
 from .bedrock_client import ExplanationResult
+from .redaction import redact
 
 
 @dataclass(frozen=True)
@@ -46,13 +47,11 @@ class AuditEvent:
     explanation_source: str | None
     bedrock_latency_ms: float | None
     bedrock_error_category: str | None
-
-
-_SECRET = re.compile(r"(?i)(?:api[_-]?key|token|password|secret)\s*(?:=|:)\s*[^\s]+")
+    channel: str | None = None
 
 
 def _redact(command: str) -> str:
-    return _SECRET.sub("[REDACTED_SECRET]", command)
+    return redact(command) or ""
 
 
 class AuditLog:
@@ -92,6 +91,7 @@ class AuditLog:
                 "explanation_source": "TEXT",
                 "bedrock_latency_ms": "REAL",
                 "bedrock_error_category": "TEXT",
+                "channel": "TEXT",
             }
             for column, kind in additions.items():
                 if column not in columns:
@@ -101,7 +101,8 @@ class AuditLog:
                confirmation_outcome: str | None = None, simulation_result: str | None = None,
                environment: str | None = None, resource_name: str | None = None,
                pipeline: PipelineDecision | None = None,
-               explanation: ExplanationResult | None = None) -> None:
+               explanation: ExplanationResult | None = None,
+               channel: str | None = None) -> None:
         deterministic = pipeline.deterministic if pipeline else evaluation
         with sqlite3.connect(self.path) as conn:
             conn.execute("""INSERT INTO audit_events
@@ -110,8 +111,8 @@ class AuditLog:
                  deterministic_decision, matched_rule_ids, decider_called, decider_status, model_verdict,
                  model_confidence, model_probabilities, decision_source, decider_latency_ms, decider_failure_reason,
                  bedrock_invoked, bedrock_model_id, bedrock_status, explanation_source, bedrock_latency_ms,
-                 bedrock_error_category)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 bedrock_error_category, channel)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (datetime.now(UTC).isoformat(), _redact(evaluation.command), _redact(evaluation.normalized_command or "") or None,
                  evaluation.decision.value, evaluation.category, json.dumps(evaluation.reasons), int(decider_available),
                  approval_outcome, confirmation_outcome, simulation_result, environment or None, resource_name or None,
@@ -122,7 +123,7 @@ class AuditLog:
                  _redact(pipeline.failure_reason) if pipeline and pipeline.failure_reason else None,
                  int(explanation is not None and explanation.source == "bedrock"), explanation.model_id if explanation else None,
                  explanation.status if explanation else None, explanation.source if explanation else None,
-                 explanation.latency_ms if explanation else None, explanation.error_category if explanation else None))
+                 explanation.latency_ms if explanation else None, explanation.error_category if explanation else None, channel))
 
     def recent(self, limit: int = 100) -> list[tuple[object, ...]]:
         with sqlite3.connect(self.path) as conn:
@@ -148,7 +149,7 @@ class AuditLog:
                    simulation_result, deterministic_decision, matched_rule_ids, decider_called, decider_status,
                    model_verdict, model_confidence, model_probabilities, decision_source, decider_latency_ms,
                    decider_failure_reason, bedrock_invoked, bedrock_model_id, bedrock_status, explanation_source,
-                   bedrock_latency_ms, bedrock_error_category FROM audit_events""" + where + " ORDER BY id DESC LIMIT ?"
+                   bedrock_latency_ms, bedrock_error_category, channel FROM audit_events""" + where + " ORDER BY id DESC LIMIT ?"
         values.append(limit)
         with sqlite3.connect(self.path) as conn:
             return [AuditEvent(*row) for row in conn.execute(query, values).fetchall()]

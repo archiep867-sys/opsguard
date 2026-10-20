@@ -31,6 +31,7 @@ class Evaluation:
 
 _SHELL_SYNTAX = re.compile(r"(?:[;|&<>`]|\$\(|\$\{|\n|\r)")
 _SAFE_EXACT = {"pwd", "ls", "git status"}
+_DESTRUCTIVE_PROGRAMS = {"dd", "wipefs", "shred", "fdisk", "parted", "shutdown", "reboot", "halt", "poweroff", "mkswap"}
 
 # Display metadata for the dashboard. Each rule maps directly to logic in
 # ``evaluate_command``; it does not claim coverage that the evaluator lacks.
@@ -38,9 +39,10 @@ POLICY_RULES = (
     ("SAFE-001", "Explicit read-only allowlist", "SAFE", "Allows pwd, ls, and git status."),
     ("SAFE-002", "Read-only Kubernetes queries", "SAFE", "Allows kubectl get and kubectl describe."),
     ("BLOCK-001", "Shell syntax and obfuscation", "BLOCK", "Rejects chaining, pipes, redirects, substitutions, and control characters."),
-    ("BLOCK-002", "Destructive operations", "BLOCK", "Rejects recursive deletion, Terraform destroy, Kubernetes deletion, destructive SQL, and cloud deletion."),
+    ("BLOCK-002", "Destructive operations", "BLOCK", "Rejects recursive deletion, Terraform destroy, Kubernetes deletion, destructive SQL, cloud deletion, disk/host wipe commands, force-push and hard reset, Docker prune, and Helm uninstall."),
     ("REVIEW-001", "State-changing operations", "REVIEW", "Requires review for Kubernetes changes, service control, permissions, cloud operations, and file writes."),
-    ("BLOCK-003", "Unknown commands", "BLOCK", "Fails closed for commands outside the explicit policy."),
+    ("BLOCK-003", "Unknown commands", "BLOCK", "Fails closed for commands outside the explicit policy, unless the Decider classifies them confidently (see MODEL-001)."),
+    ("MODEL-001", "Decider-assisted triage of unknown commands", "REVIEW", "An unknown command is never SAFE. If the Decider is confident it is not destructive, it needs human review; otherwise it stays blocked."),
 )
 
 
@@ -80,6 +82,23 @@ def evaluate_command(command: str) -> Evaluation:
         for word in lower
     ):
         return _blocked(command, "destructive", "Cloud resource deletion is prohibited.", "BLOCK-002")
+
+    if program in _DESTRUCTIVE_PROGRAMS or program.startswith("mkfs"):
+        return _blocked(command, "destructive", f"{program} can wipe disks, halt hosts, or destroy data.", "BLOCK-002")
+    if program == "git" and len(lower) > 1 and (
+        (lower[1] == "push" and any(flag in {"-f", "--force", "--force-with-lease"} for flag in lower[2:]))
+        or (lower[1] == "reset" and "--hard" in lower[2:])
+        or (lower[1] == "clean" and any(flag.startswith("-") and "f" in flag for flag in lower[2:]))
+    ):
+        return _blocked(command, "destructive", "Force-push, hard reset, and forced clean can destroy history or work.", "BLOCK-002")
+    if program == "docker" and len(lower) > 2 and (
+        (lower[1] == "system" and lower[2] == "prune") or (lower[1] in {"volume", "network", "image"} and lower[2] in {"rm", "prune"})
+    ):
+        return _blocked(command, "destructive", "Docker prune and removal commands delete data and images.", "BLOCK-002")
+    if program == "helm" and len(lower) > 1 and lower[1] in {"uninstall", "delete"}:
+        return _blocked(command, "destructive", "Helm uninstall removes a release and its resources.", "BLOCK-002")
+    if program == "chmod" and any(arg in {"-r", "-R"} for arg in parts[1:]) and any(arg.endswith("777") for arg in parts[1:]):
+        return _blocked(command, "destructive", "Recursive world-writable permissions are prohibited.", "BLOCK-002")
 
     if normalized in _SAFE_EXACT:
         return Evaluation(command, normalized, Decision.SAFE, "read-only", ("Explicit read-only allowlist match.",), 1.0, ("SAFE-001",))
