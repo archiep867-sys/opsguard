@@ -43,8 +43,8 @@ POLICY_RULES = (
     ("SAFE-002", "Read-only Kubernetes queries", "SAFE", "Allows kubectl get and kubectl describe."),
     ("SAFE-003", "Extended read-only allowlist", "SAFE", "Allows kubectl logs/top, docker ps/images/logs, helm list/status, git log/diff/show, AWS describe-/list-/s3 ls, and basic host info."),
     ("BLOCK-001", "Shell syntax and obfuscation", "BLOCK", "Rejects chaining, pipes, redirects, substitutions, and control characters."),
-    ("BLOCK-002", "Destructive operations", "BLOCK", "Rejects recursive deletion, Terraform destroy, Kubernetes deletion, destructive SQL, cloud deletion, disk/host wipe commands, force-push and hard reset, Docker prune, and Helm uninstall."),
-    ("REVIEW-001", "State-changing operations", "REVIEW", "Requires review for Kubernetes changes, service control, permissions, cloud operations, and file writes."),
+    ("BLOCK-002", "Destructive operations", "BLOCK", "Rejects recursive deletion, Terraform destroy, Kubernetes deletion, destructive SQL, cloud deletion, disk/host wipe commands, force-push and hard reset, Docker prune, Helm uninstall, and high-risk AWS actions (bucket removal, recursive S3 deletes, AdministratorAccess, public ACLs, world-open security groups)."),
+    ("REVIEW-001", "State-changing operations", "REVIEW", "Requires review for Kubernetes changes, service control, permissions, cloud operations, file writes, and Docker, Helm and Git changes (restart, run, upgrade, commit, push, merge)."),
     ("BLOCK-003", "Unknown commands", "BLOCK", "Fails closed for commands outside the explicit policy, unless the Decider classifies them confidently (see MODEL-001)."),
     ("MODEL-001", "Decider-assisted triage of unknown commands", "REVIEW", "An unknown command is never SAFE. If the Decider is confident it is not destructive, it needs human review; otherwise it stays blocked."),
 )
