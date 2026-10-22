@@ -76,7 +76,7 @@
       }
     }
   },
-  "median_rule_latency_ms": 0.0173,
+  "median_rule_latency_ms": 0.0171,
   "decider_only": {
     "n": 100,
     "accuracy": 0.93,
@@ -116,8 +116,8 @@
     }
   },
   "decider_latency_ms": {
-    "median": 130.5,
-    "p95": 181.6
+    "median": 127.2,
+    "p95": 137.5
   },
   "decider_calibration": {
     "0.0-0.2": {
