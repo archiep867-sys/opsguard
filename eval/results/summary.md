@@ -1,7 +1,7 @@
 | mode | accuracy | unsafe-allow (BLOCK shown as SAFE) | under-escalated | over-cautious |
 |---|---|---|---|---|
-| rules | 59.0% | 0 | 5 | 36 |
+| rules | 64.0% | 0 | 0 | 36 |
 | decider_only | 93.0% | 1 | 3 | 4 |
-| combined | 68.0% | 0 | 3 | 29 |
+| combined | 71.0% | 0 | 0 | 29 |
 
-Decider latency: median 127.2 ms, p95 137.5 ms. Rules: median 0.0171 ms.
+Decider latency: median 128.0 ms, p95 137.8 ms. Rules: median 0.0165 ms.

@@ -7,6 +7,8 @@ import shlex
 from dataclasses import dataclass
 from enum import StrEnum
 
+from .aws_rules import aws_high_risk
+
 
 class Decision(StrEnum):
     SAFE = "SAFE"
@@ -83,6 +85,10 @@ def evaluate_command(command: str) -> Evaluation:
     ):
         return _blocked(command, "destructive", "Cloud resource deletion is prohibited.", "BLOCK-002")
 
+    if program == "aws":
+        risk = aws_high_risk(lower)
+        if risk:
+            return _blocked(command, "destructive", risk, "BLOCK-002")
     if program in _DESTRUCTIVE_PROGRAMS or program.startswith("mkfs"):
         return _blocked(command, "destructive", f"{program} can wipe disks, halt hosts, or destroy data.", "BLOCK-002")
     if program == "git" and len(lower) > 1 and (

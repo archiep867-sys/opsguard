@@ -72,14 +72,14 @@ kubectl delete pod --all,BLOCK,BLOCK,BLOCK,0.6993,BLOCK,HARD_BLOCK
 kubectl delete deployment web,BLOCK,BLOCK,BLOCK,0.5406,BLOCK,HARD_BLOCK
 terraform destroy,BLOCK,BLOCK,BLOCK,0.6046,BLOCK,HARD_BLOCK
 terraform destroy -auto-approve,BLOCK,BLOCK,BLOCK,0.6453,BLOCK,HARD_BLOCK
-aws s3 rb s3://prod-data --force,BLOCK,REVIEW,BLOCK,0.6922,BLOCK,DECIDER_USED
-aws s3 rm s3://prod-data --recursive,BLOCK,REVIEW,BLOCK,0.7148,BLOCK,DECIDER_USED
+aws s3 rb s3://prod-data --force,BLOCK,BLOCK,BLOCK,0.6922,BLOCK,HARD_BLOCK
+aws s3 rm s3://prod-data --recursive,BLOCK,BLOCK,BLOCK,0.7148,BLOCK,HARD_BLOCK
 aws ec2 terminate-instances --instance-ids i-0abc,BLOCK,BLOCK,BLOCK,0.6679,BLOCK,HARD_BLOCK
 aws rds delete-db-instance --db-instance-identifier prod,BLOCK,BLOCK,BLOCK,0.7139,BLOCK,HARD_BLOCK
 aws iam delete-user --user-name admin,BLOCK,BLOCK,BLOCK,0.7967,BLOCK,HARD_BLOCK
-aws iam attach-user-policy --user-name ci-bot --policy-arn arn:aws:iam::aws:policy/AdministratorAccess,BLOCK,REVIEW,BLOCK,0.3103,REVIEW,DECIDER_USED
-aws s3api put-bucket-acl --bucket reports --acl public-read,BLOCK,REVIEW,REVIEW,0.504,REVIEW,DECIDER_USED
-aws ec2 authorize-security-group-ingress --group-id sg-1 --protocol tcp --port 22 --cidr 0.0.0.0/0,BLOCK,REVIEW,BLOCK,0.3092,REVIEW,DECIDER_USED
+aws iam attach-user-policy --user-name ci-bot --policy-arn arn:aws:iam::aws:policy/AdministratorAccess,BLOCK,BLOCK,BLOCK,0.3103,BLOCK,HARD_BLOCK
+aws s3api put-bucket-acl --bucket reports --acl public-read,BLOCK,BLOCK,REVIEW,0.504,BLOCK,HARD_BLOCK
+aws ec2 authorize-security-group-ingress --group-id sg-1 --protocol tcp --port 22 --cidr 0.0.0.0/0,BLOCK,BLOCK,BLOCK,0.3092,BLOCK,HARD_BLOCK
 psql -c DROP DATABASE prod,BLOCK,BLOCK,BLOCK,0.7391,BLOCK,HARD_BLOCK
 mysql -e DROP TABLE users,BLOCK,BLOCK,BLOCK,0.791,BLOCK,HARD_BLOCK
 dd if=/dev/zero of=/dev/sda,BLOCK,BLOCK,BLOCK,0.709,BLOCK,HARD_BLOCK
