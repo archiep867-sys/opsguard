@@ -2,7 +2,7 @@
 
 Pattern (see docs/DECISION_PATTERN.md):
     SAFE   -> Proceed
-    REVIEW -> Deny until a *human* approves (the model cannot approve)
+    REVIEW -> Deny until a *human* approves in the dashboard (the model cannot approve)
     BLOCK  -> Deny
 The agent only ever proposes `run_command`; the tool itself performs a simulation, never
 a real action.
@@ -38,7 +38,7 @@ class PendingRequest:
 
 
 class ApprovalStore:
-    """Holds human approvals out-of-band. Only human-facing code calls `grant`; the model cannot."""
+    """Holds human approvals out-of-band. Only dashboard code calls `grant`; the model cannot."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -135,7 +135,7 @@ class OpsGuardGate(InterventionHandler):
                 request = self.store.request(pipeline, environment, resource_name)
                 entry["action"], entry["request_id"] = "deny (awaiting human approval)", request.request_id
                 result = Deny(reason=(
-                    f"REVIEW required: a person must approve request #{request.request_id} "
+                    f"REVIEW required: a person must approve request #{request.request_id} in the OpsGuard dashboard "
                     "by typing the exact resource name. Tell the user this, and do not retry until they confirm."))
         else:
             entry["action"] = "proceed"

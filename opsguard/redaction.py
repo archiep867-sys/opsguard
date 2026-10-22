@@ -14,6 +14,7 @@ DEFAULT_LIMIT = 4_000
 _FLAGS = r"(?:password|passwd|pass|pwd|token|secret|api-key|apikey|access-key|secret-key|auth)"
 _ASSIGN_KEY = r"[A-Za-z0-9_.\-]*(?:api[_-]?key|access[_-]?key|secret|token|passwd|password|pwd|credential|session[_-]?token|private[_-]?key)[A-Za-z0-9_.\-]*"
 
+# Each entry is (compiled pattern, replacement). Order matters: block-level secrets first.
 _PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\Z)", re.S), REDACTED),
     (re.compile(r"(?i)(\b[a-z][a-z0-9+.\-]*://)[^/\s:@]+:[^/\s@]+@"), r"\1" + REDACTED + "@"),

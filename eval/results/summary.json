@@ -1,0 +1,144 @@
+{
+  "n": 100,
+  "rules": {
+    "n": 100,
+    "accuracy": 0.59,
+    "unsafe_allow": 0,
+    "under_escalated": 5,
+    "over_cautious": 36,
+    "confusion": {
+      "SAFE": {
+        "SAFE": 11,
+        "REVIEW": 6,
+        "BLOCK": 13
+      },
+      "REVIEW": {
+        "SAFE": 0,
+        "REVIEW": 18,
+        "BLOCK": 17
+      },
+      "BLOCK": {
+        "SAFE": 0,
+        "REVIEW": 5,
+        "BLOCK": 30
+      }
+    },
+    "per_class": {
+      "SAFE": {
+        "precision": 1.0,
+        "recall": 0.36666666666666664
+      },
+      "REVIEW": {
+        "precision": 0.6206896551724138,
+        "recall": 0.5142857142857142
+      },
+      "BLOCK": {
+        "precision": 0.5,
+        "recall": 0.8571428571428571
+      }
+    }
+  },
+  "combined": {
+    "n": 100,
+    "accuracy": 0.68,
+    "unsafe_allow": 0,
+    "under_escalated": 3,
+    "over_cautious": 29,
+    "confusion": {
+      "SAFE": {
+        "SAFE": 11,
+        "REVIEW": 18,
+        "BLOCK": 1
+      },
+      "REVIEW": {
+        "SAFE": 0,
+        "REVIEW": 25,
+        "BLOCK": 10
+      },
+      "BLOCK": {
+        "SAFE": 0,
+        "REVIEW": 3,
+        "BLOCK": 32
+      }
+    },
+    "per_class": {
+      "SAFE": {
+        "precision": 1.0,
+        "recall": 0.36666666666666664
+      },
+      "REVIEW": {
+        "precision": 0.5434782608695652,
+        "recall": 0.7142857142857143
+      },
+      "BLOCK": {
+        "precision": 0.7441860465116279,
+        "recall": 0.9142857142857143
+      }
+    }
+  },
+  "median_rule_latency_ms": 0.0173,
+  "decider_only": {
+    "n": 100,
+    "accuracy": 0.93,
+    "unsafe_allow": 1,
+    "under_escalated": 3,
+    "over_cautious": 4,
+    "confusion": {
+      "SAFE": {
+        "SAFE": 29,
+        "REVIEW": 1,
+        "BLOCK": 0
+      },
+      "REVIEW": {
+        "SAFE": 0,
+        "REVIEW": 32,
+        "BLOCK": 3
+      },
+      "BLOCK": {
+        "SAFE": 1,
+        "REVIEW": 2,
+        "BLOCK": 32
+      }
+    },
+    "per_class": {
+      "SAFE": {
+        "precision": 0.9666666666666667,
+        "recall": 0.9666666666666667
+      },
+      "REVIEW": {
+        "precision": 0.9142857142857143,
+        "recall": 0.9142857142857143
+      },
+      "BLOCK": {
+        "precision": 0.9142857142857143,
+        "recall": 0.9142857142857143
+      }
+    }
+  },
+  "decider_latency_ms": {
+    "median": 130.5,
+    "p95": 181.6
+  },
+  "decider_calibration": {
+    "0.0-0.2": {
+      "n": 1,
+      "accuracy": 1.0
+    },
+    "0.2-0.4": {
+      "n": 20,
+      "accuracy": 0.7
+    },
+    "0.4-0.6": {
+      "n": 18,
+      "accuracy": 0.9444444444444444
+    },
+    "0.6-0.8": {
+      "n": 49,
+      "accuracy": 1.0
+    },
+    "0.8-1.0": {
+      "n": 12,
+      "accuracy": 1.0
+    }
+  }
+}

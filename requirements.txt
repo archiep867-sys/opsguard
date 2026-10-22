@@ -1,6 +1,7 @@
-streamlit>=1.40
+streamlit>=1.50
 httpx>=0.28
 pandas>=2.0
 pytest>=8.0
-strands-agents
-boto3
+boto3>=1.35
+botocore[crt]>=1.35
+strands-agents>=1.60

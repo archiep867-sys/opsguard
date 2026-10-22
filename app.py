@@ -12,6 +12,7 @@ import streamlit as st
 
 from opsguard.approval import approve
 from opsguard.audit import AuditEvent, AuditLog
+from opsguard.bedrock_client import BEDROCK_DISABLED, BedrockClient
 from opsguard.decider_client import DeciderClient
 from opsguard.decision_pipeline import PipelineDecision, decide
 from opsguard.safety_engine import Decision, Evaluation, POLICY_RULES
@@ -19,6 +20,14 @@ from opsguard.simulator import simulate
 
 AUDIT = AuditLog()
 EXAMPLES = {"Read cluster pods": "kubectl get pods -n production", "Deploy workload": "kubectl apply -f deployment.yaml", "Delete files": "rm -rf /", "Inspect Git state": "git status"}
+SCENARIOS = {
+    "Safe Kubernetes inspection": ("kubectl get pods -n staging", "staging", "pods"),
+    "Scale a deployment": ("kubectl scale deployment web --replicas=5 -n staging", "staging", "web"),
+    "Delete a namespace": ("kubectl delete namespace production", "production", "production"),
+    "Suspicious IAM change": ("aws iam attach-user-policy --user-name ci-bot --policy-arn arn:aws:iam::aws:policy/AdministratorAccess", "production", "ci-bot"),
+    "Open an S3 bucket": ("aws s3api put-bucket-acl --bucket reports --acl public-read", "production", "reports"),
+    "Unknown tool (Decider triage)": ("docker ps", "staging", "docker"),
+}
 RISK_COLORS = {"SAFE": "#33c38e", "REVIEW": "#f6b84b", "BLOCK": "#ef6b73"}
 
 
@@ -68,7 +77,7 @@ def overview(client: DeciderClient) -> None:
         st.subheader("Recent security events")
         events = AUDIT.events(limit=8)
         if events:
-            st.dataframe(pd.DataFrame(_event_rows(events)), use_container_width=True, hide_index=True)
+            st.dataframe(pd.DataFrame(_event_rows(events)), width="stretch", hide_index=True)
         else:
             st.info("No evaluations recorded. Use the Command Playground to create the first local audit event.")
 
@@ -77,11 +86,54 @@ def _evaluate(command: str, environment: str, resource: str, client: DeciderClie
     pipeline = decide(command, client)
     evaluation = pipeline.final
     st.session_state.update(evaluation=evaluation, pipeline=pipeline, evaluation_context=(command, environment, resource), approval=None, decider_available=pipeline.decider_status == "DECIDER_USED", model_detail=pipeline.decider_status)
-    AUDIT.record(evaluation, decider_available=pipeline.decider_status == "DECIDER_USED", environment=environment, resource_name=resource, pipeline=pipeline)
+    event_id = AUDIT.record(evaluation, decider_available=pipeline.decider_status == "DECIDER_USED", environment=environment, resource_name=resource, pipeline=pipeline)
+    st.session_state.update(audit_event_id=event_id, explanation=None, explanation_context=None)
+
+
+def _confidence_panel(pipeline: PipelineDecision) -> None:
+    """Show the Decider's real probabilities and confidence (never invented numbers)."""
+    if not pipeline.model_probabilities:
+        return
+    st.markdown("**Strands Decider vote**")
+    for label in ("safe", "review", "block"):
+        value = pipeline.model_probabilities.get(label, 0.0)
+        color = RISK_COLORS[label.upper()]
+        st.markdown(f'<div style="display:flex;align-items:center;gap:.6rem;margin:.15rem 0"><span style="width:4.5rem;font-size:.8rem;color:#a9bbcf">{label.upper()}</span>'
+                    f'<div style="flex:1;background:#0d1d30;border-radius:6px;height:12px"><div style="width:{value * 100:.1f}%;background:{color};height:12px;border-radius:6px"></div></div>'
+                    f'<span style="width:3.2rem;text-align:right;font-size:.8rem">{value:.2f}</span></div>', unsafe_allow_html=True)
+    latency = f"{pipeline.latency_ms:.0f} ms" if pipeline.latency_ms is not None else "n/a"
+    st.caption(f"Confidence {pipeline.model_confidence:.2f} · Decider latency {latency} · measured on this machine")
+
+
+def _explain_panel(evaluation: Evaluation, pipeline: PipelineDecision, context: tuple[str, str, str]) -> None:
+    """Optional Bedrock explanation; it can never change the verdict above."""
+    bedrock = BedrockClient()
+    with st.expander("Explain this decision in plain words (optional, Amazon Bedrock)"):
+        state = bedrock.status()
+        if state == BEDROCK_DISABLED:
+            st.caption("Bedrock is off (OPSGUARD_BEDROCK_ENABLED is not true). A template explanation is available without any AI model.")
+        question = st.text_input("What would you like explained?", value="What will this command do and what should I do next?", key="explain_question")
+        if st.button("Explain"):
+            result = bedrock.explain(pipeline, question, environment=context[1], resource_name=context[2])
+            st.session_state.update(explanation=result, explanation_context=context)
+            if st.session_state.get("audit_event_id"):
+                AUDIT.attach_explanation(st.session_state["audit_event_id"], result)
+        result = st.session_state.get("explanation")
+        if result is not None and st.session_state.get("explanation_context") == context:  # never show another command's text
+            label = {"bedrock": f"AI-generated by Amazon Bedrock ({result.model_id})", "local_template": "Template explanation (not AI-generated)"}[result.source]
+            st.caption(f"{label} · status {result.status}" + (f" · {result.error_category}" if result.error_category else "") + f" · authoritative verdict: {evaluation.decision.value}")
+            st.markdown(result.text)
 
 
 def playground(client: DeciderClient) -> None:
     _header("Command Security Playground", "Evaluate a proposed DevOps command. Approval enables a simulation record only—never execution.")
+    st.markdown("**One-click scenarios**")
+    columns = st.columns(3)
+    for index, (label, (scenario_command, scenario_env, scenario_resource)) in enumerate(SCENARIOS.items()):
+        if columns[index % 3].button(label, key=f"scenario_{index}", width="stretch"):
+            st.session_state.update(command_input=scenario_command, environment_input=scenario_env, resource_input=scenario_resource)
+            with st.spinner("Evaluating…"):
+                _evaluate(scenario_command, scenario_env, scenario_resource, client)
     choice = st.selectbox("Load an example", ["Custom", *EXAMPLES], key="example")
     if choice != "Custom" and st.session_state.get("loaded_example") != choice:
         st.session_state["command_input"], st.session_state["loaded_example"] = EXAMPLES[choice], choice
@@ -89,7 +141,7 @@ def playground(client: DeciderClient) -> None:
     first, second = st.columns(2)
     environment = first.text_input("Target environment", key="environment_input", placeholder="production")
     resource = second.text_input("Exact resource name", key="resource_input", placeholder="api-deployment")
-    if st.button("Evaluate command", type="primary", use_container_width=True):
+    if st.button("Evaluate command", type="primary", width="stretch"):
         with st.spinner("Applying deterministic safety policy…"):
             _evaluate(command, environment, resource, client)
     evaluation: Evaluation | None = st.session_state.get("evaluation")
@@ -117,10 +169,13 @@ def playground(client: DeciderClient) -> None:
             st.caption(f"Model verdict: {pipeline.model_verdict.value}; confidence: {pipeline.model_confidence:.2f}")
         elif pipeline and pipeline.failure_reason:
             st.caption(pipeline.failure_reason)
-        st.caption("The final verdict is the stricter deterministic/model result; hard blocks never call the model.")
+        st.caption("Hard blocks never call the model. Known commands can only be tightened by the Decider. Unknown commands go to human REVIEW at best, never SAFE.")
+        if pipeline:
+            _confidence_panel(pipeline)
     st.code(evaluation.normalized_command or evaluation.command, language="bash")
     if not context_matches:
         return
+    _explain_panel(evaluation, pipeline, (command, environment, resource))
     if evaluation.decision is Decision.BLOCK:
         st.error("Blocked commands cannot be approved or simulated.")
     elif evaluation.decision is Decision.SAFE:
@@ -142,14 +197,65 @@ def playground(client: DeciderClient) -> None:
                 st.error(str(exc))
 
 
+def agent_console(client: DeciderClient) -> None:
+    """A Bedrock-powered Strands agent whose every tool call passes through the OpsGuard gate."""
+    _header("Agent console", "An Amazon Bedrock agent proposes commands; Strands Decider and policy gate every one. Nothing is executed.")
+    bedrock = BedrockClient()
+    if not bedrock.enabled or not bedrock.model_id or not bedrock.region:
+        st.warning("Set OPSGUARD_BEDROCK_ENABLED=true, OPSGUARD_BEDROCK_MODEL_ID and AWS_REGION, then restart (see README).")
+        return
+    from opsguard.agent import build_agent
+    from opsguard.gate import ApprovalStore, OpsGuardGate
+
+    if "gate" not in st.session_state:
+        gate = OpsGuardGate(client, ApprovalStore(), AUDIT)
+        st.session_state.update(gate=gate, agent=build_agent(gate), chat=[])
+    gate: OpsGuardGate = st.session_state["gate"]
+    for role, text in st.session_state["chat"]:
+        st.chat_message(role).write(text)
+    prompt = st.chat_input("Ask the agent to do something, e.g. 'scale web to 5 replicas in staging'")
+    if prompt:
+        st.session_state["chat"].append(("user", prompt))
+        with st.spinner("Agent is working…"):
+            try:
+                reply = str(st.session_state["agent"](prompt))
+            except Exception as exc:  # noqa: BLE001 - show a safe category, never raw AWS text
+                reply = f"The agent could not complete the request ({BedrockClient.categorize_error(exc)})."
+        st.session_state["chat"].append(("assistant", reply))
+        st.rerun()
+    st.subheader("Decision trail")
+    if gate.log:
+        st.dataframe(pd.DataFrame(gate.log[::-1]), width="stretch", hide_index=True)
+    else:
+        st.caption("Each tool call the agent proposes appears here with its verdict, Decider confidence and gate latency.")
+    st.subheader("Human approvals")
+    pending = gate.store.pending()
+    if not pending:
+        st.caption("No approvals waiting. Commands that need review appear here for a person to approve.")
+    for request in pending:
+        with st.container(border=True):
+            st.write(f"**Request #{request.request_id}** · `{request.command}` · {request.environment or 'no environment'} / {request.resource_name or 'no resource'}")
+            confirmation = st.text_input("Type the exact resource name to approve", key=f"confirm_{request.request_id}")
+            approve_col, reject_col = st.columns(2)
+            if approve_col.button("Approve", key=f"approve_{request.request_id}"):
+                try:
+                    gate.store.grant(request.request_id, confirmation)
+                    st.success("Approved for one simulation. Tell the agent to retry.")
+                except ValueError as exc:
+                    st.error(str(exc))
+            if reject_col.button("Reject", key=f"reject_{request.request_id}"):
+                gate.store.reject(request.request_id)
+                st.rerun()
+
+
 def policy_details() -> None:
     _header("Policy and decision details", "Rules are derived from the local deterministic evaluator; optional model output is not policy.")
     query = st.text_input("Filter policy rules", placeholder="Search identifiers, levels, or descriptions")
     rows = [{"Rule": rule, "Policy": description, "Decision": level, "Coverage": coverage} for rule, description, level, coverage in POLICY_RULES]
     if query:
         rows = [row for row in rows if query.lower() in " ".join(map(str, row.values())).lower()]
-    st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
-    st.info("Decider classifications can only escalate the deterministic result and never authorize an action.")
+    st.dataframe(pd.DataFrame(rows), width="stretch", hide_index=True)
+    st.info("The Decider can tighten a verdict, or route an unknown command to human review. It never makes a command SAFE, and Bedrock text never changes a verdict.")
 
 
 def audit_explorer() -> None:
@@ -170,7 +276,7 @@ def audit_explorer() -> None:
         st.info("No audit records match these filters.")
         return
     frame = pd.DataFrame(rows)
-    st.dataframe(frame, use_container_width=True, hide_index=True)
+    st.dataframe(frame, width="stretch", hide_index=True)
     buffer = io.StringIO()
     writer = csv.DictWriter(buffer, fieldnames=list(rows[0]))
     writer.writeheader(); writer.writerows(rows)
@@ -185,19 +291,20 @@ def system_status(client: DeciderClient) -> None:
         {"Capability": "Human simulation approval", "Status": "Enabled", "Detail": "Exact resource confirmation for REVIEW"},
         {"Capability": "SQLite audit log", "Status": "Enabled", "Detail": "Local parameterized writes"},
         {"Capability": "Local Strands Decider", "Status": status, "Detail": description},
+        {"Capability": "Amazon Bedrock explanations and agent", "Status": BedrockClient().status(), "Detail": "Optional; configuration state only, no AWS call is made on this page"},
         {"Capability": "Command execution", "Status": "Disabled", "Detail": "No shell or infrastructure adapter exists"},
-    ]), use_container_width=True, hide_index=True)
+    ]), width="stretch", hide_index=True)
     st.subheader("Prototype limitations")
-    st.markdown("- SQLite audit logs are local and not tamper-evident.\n- Approval is not identity verification or production authorization.\n- Do not submit credentials, secrets, or tokens.\n- The local Decider is optional; offline behavior uses deterministic policy.")
+    st.markdown("- SQLite audit logs are local and not tamper-evident.\n- Approval is not identity verification or production authorization.\n- Do not submit credentials, secrets, or tokens.\n- The local Decider is optional; offline, known commands use deterministic policy and unknown commands stay blocked.\n- Bedrock text is an explanation only; a model request sends sanitized decision context to AWS.")
 
 
 def main() -> None:
     _configure(); client = DeciderClient()
     with st.sidebar:
         st.markdown("## OpsGuard"); st.caption("Command safety control plane")
-        page = st.radio("Navigation", ["Security Overview", "Command Playground", "Policy Details", "Audit Explorer", "System Status"])
+        page = st.radio("Navigation", ["Security Overview", "Command Playground", "Agent Console", "Policy Details", "Audit Explorer", "System Status"])
         st.divider(); st.caption("Simulation-only prototype")
-    {"Security Overview": lambda: overview(client), "Command Playground": lambda: playground(client), "Policy Details": policy_details, "Audit Explorer": audit_explorer, "System Status": lambda: system_status(client)}[page]()
+    {"Security Overview": lambda: overview(client), "Command Playground": lambda: playground(client), "Agent Console": lambda: agent_console(client), "Policy Details": policy_details, "Audit Explorer": audit_explorer, "System Status": lambda: system_status(client)}[page]()
 
 
 if __name__ == "__main__":

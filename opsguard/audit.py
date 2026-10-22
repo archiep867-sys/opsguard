@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import re
 import sqlite3
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -47,11 +46,12 @@ class AuditEvent:
     explanation_source: str | None
     bedrock_latency_ms: float | None
     bedrock_error_category: str | None
+    bedrock_attempted: bool = False
     channel: str | None = None
 
 
-def _redact(command: str) -> str:
-    return redact(command) or ""
+def _redact(value: str) -> str:
+    return redact(value, limit=None) or ""
 
 
 class AuditLog:
@@ -91,6 +91,7 @@ class AuditLog:
                 "explanation_source": "TEXT",
                 "bedrock_latency_ms": "REAL",
                 "bedrock_error_category": "TEXT",
+                "bedrock_attempted": "INTEGER NOT NULL DEFAULT 0",
                 "channel": "TEXT",
             }
             for column, kind in additions.items():
@@ -101,18 +102,17 @@ class AuditLog:
                confirmation_outcome: str | None = None, simulation_result: str | None = None,
                environment: str | None = None, resource_name: str | None = None,
                pipeline: PipelineDecision | None = None,
-               explanation: ExplanationResult | None = None,
-               channel: str | None = None) -> None:
+               explanation: ExplanationResult | None = None, channel: str = "dashboard") -> int:
         deterministic = pipeline.deterministic if pipeline else evaluation
         with sqlite3.connect(self.path) as conn:
-            conn.execute("""INSERT INTO audit_events
+            cursor = conn.execute("""INSERT INTO audit_events
                 (created_at, command, normalized_command, decision, category, reasons, decider_available,
                  approval_outcome, confirmation_outcome, simulation_result, environment, resource_name,
                  deterministic_decision, matched_rule_ids, decider_called, decider_status, model_verdict,
                  model_confidence, model_probabilities, decision_source, decider_latency_ms, decider_failure_reason,
                  bedrock_invoked, bedrock_model_id, bedrock_status, explanation_source, bedrock_latency_ms,
-                 bedrock_error_category, channel)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                 bedrock_error_category, bedrock_attempted, channel)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (datetime.now(UTC).isoformat(), _redact(evaluation.command), _redact(evaluation.normalized_command or "") or None,
                  evaluation.decision.value, evaluation.category, json.dumps(evaluation.reasons), int(decider_available),
                  approval_outcome, confirmation_outcome, simulation_result, environment or None, resource_name or None,
@@ -123,7 +123,19 @@ class AuditLog:
                  _redact(pipeline.failure_reason) if pipeline and pipeline.failure_reason else None,
                  int(explanation is not None and explanation.source == "bedrock"), explanation.model_id if explanation else None,
                  explanation.status if explanation else None, explanation.source if explanation else None,
-                 explanation.latency_ms if explanation else None, explanation.error_category if explanation else None, channel))
+                 explanation.latency_ms if explanation else None, explanation.error_category if explanation else None,
+                 int(bool(explanation and explanation.attempted)), channel))
+            return int(cursor.lastrowid or 0)
+
+    def attach_explanation(self, event_id: int, explanation: ExplanationResult) -> None:
+        """Record which explanation path was used for an existing decision (metadata only)."""
+        with sqlite3.connect(self.path) as conn:
+            conn.execute("""UPDATE audit_events SET bedrock_invoked = ?, bedrock_model_id = ?, bedrock_status = ?,
+                            explanation_source = ?, bedrock_latency_ms = ?, bedrock_error_category = ?,
+                            bedrock_attempted = ? WHERE id = ?""",
+                         (int(explanation.source == "bedrock"), explanation.model_id, explanation.status,
+                          explanation.source, explanation.latency_ms, explanation.error_category,
+                          int(explanation.attempted), event_id))
 
     def recent(self, limit: int = 100) -> list[tuple[object, ...]]:
         with sqlite3.connect(self.path) as conn:
@@ -149,10 +161,10 @@ class AuditLog:
                    simulation_result, deterministic_decision, matched_rule_ids, decider_called, decider_status,
                    model_verdict, model_confidence, model_probabilities, decision_source, decider_latency_ms,
                    decider_failure_reason, bedrock_invoked, bedrock_model_id, bedrock_status, explanation_source,
-                   bedrock_latency_ms, bedrock_error_category, channel FROM audit_events""" + where + " ORDER BY id DESC LIMIT ?"
+                   bedrock_latency_ms, bedrock_error_category, bedrock_attempted, channel FROM audit_events""" + where + " ORDER BY id DESC LIMIT ?"
         values.append(limit)
         with sqlite3.connect(self.path) as conn:
-            return [AuditEvent(*row) for row in conn.execute(query, values).fetchall()]
+            return [AuditEvent(*row[:29], bool(row[29]), row[30]) for row in conn.execute(query, values).fetchall()]
 
     def metrics(self) -> dict[str, int]:
         with sqlite3.connect(self.path) as conn:

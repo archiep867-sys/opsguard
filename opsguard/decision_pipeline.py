@@ -103,6 +103,8 @@ def decide(
         )
         return PipelineDecision(deterministic, final, True, "DECIDER_USED", result.verdict, result.probabilities, result.confidence, result.latency_ms, None, "decider-assisted triage", True)
 
+    # Known SAFE/REVIEW command: the model may only tighten. A low-confidence BLOCK vote
+    # becomes REVIEW so that a person, not a shaky score, makes the final call.
     effective = result.verdict
     if effective is Decision.BLOCK and result.confidence < floor:
         effective = Decision.REVIEW

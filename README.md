@@ -1,96 +1,138 @@
 # OpsGuard
 
-OpsGuard is a local, **simulation-only** DevSecOps command-safety dashboard. It never invokes a shell, cloud SDK, Kubernetes client, database driver, or infrastructure operation. A deterministic policy supplies a hard safety floor; a local Strands Decider classification can make a result stricter but can never downgrade it.
+A fast safety gate for AI agents that run DevOps commands. A small decision model, **Strands
+Decider 2B**, labels every command **SAFE**, **REVIEW**, or **BLOCK** with a confidence score
+before anything happens. Safe commands are simulated, risky ones wait for a person who must type
+the exact resource name, and dangerous ones are refused. **Amazon Bedrock** powers the agent's
+conversation and plain-language explanations.
 
-## Setup and run
+> **Safety:** OpsGuard never executes commands. There is no shell, cloud, cluster, file, or
+> database adapter. "Run" always means "record a simulation".
+
+Hackathon tags: `#strands-decider-2b` `#policy`. Reusable pattern: [docs/DECISION_PATTERN.md](docs/DECISION_PATTERN.md).
+
+## How it decides
+
+```
+agent / user command
+        │
+        ▼
+ ┌─────────────────┐   hard rules: destructive, shell tricks, malformed
+ │ 1 POLICY CHECK  │──► BLOCK (the model is never asked)
+ └────────┬────────┘
+          ▼
+ ┌─────────────────┐   local Strands Decider: safe / review / block + confidence
+ │ 2 DECIDER VOTE  │   known commands: can only tighten the verdict
+ └────────┬────────┘   unknown commands: human REVIEW at best, never SAFE
+          ▼
+ ┌─────────────────┐   REVIEW needs a person to type the exact resource name
+ │ 3 HUMAN GATE    │   (approval is bound to one command + target, single use)
+ └────────┬────────┘
+          ▼
+ ┌─────────────────┐
+ │ 4 SIMULATION    │   records what would happen; nothing runs
+ └─────────────────┘
+ Bedrock (optional) explains the result in plain words. It never changes a verdict.
+```
+
+| Question | Answer |
+|---|---|
+| Who decides? | Deterministic rules plus the Decider. Bedrock text is never parsed for decisions. |
+| Can the model make something SAFE? | No. Only the exact read-only allowlist is SAFE. |
+| Can the model unblock a command? | Only an *unknown* command, to REVIEW, when confident. Destructive commands stay blocked. |
+| What if the Decider is down or confused? | Known commands keep their rule verdict; unknown commands stay blocked. |
+| What does the agent do? | A Bedrock Strands agent proposes `run_command`; an `InterventionHandler` gates every call. |
+
+## Quick start (macOS)
 
 ```bash
-cd ~/cybershield-ai
-source .venv/bin/activate
-pip install -r requirements.txt
-python -m pytest -q
+python3.12 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt strands-decider
+
+# Terminal 1: the local decision model (first run downloads about 4 GB)
+strands-decider serve StrandsAgents/strands-decider-2B-qwen3.5-v1-2610 --port 8099
+
+# Terminal 2: the dashboard
 streamlit run app.py
 ```
 
-Open the local Streamlit URL it prints. Try `kubectl get pods -n production` (SAFE), `kubectl apply -f deployment.yaml` (REVIEW), and `rm -rf /` (BLOCK).
+Without the Decider, OpsGuard still works: known commands use the rules and unknown commands
+stay blocked. The dashboard's System Status page shows what is available.
 
-## Deployment on Render
-
-This repository includes a Render Blueprint in `render.yaml`:
-
-- **Runtime:** Python 3.12.15 (`runtime.txt`)
-- **Build command:** `pip install -r requirements.txt`
-- **Start command:** `streamlit run app.py --server.address 0.0.0.0 --server.port $PORT`
-- **Health check:** `/_stcore/health`
-- **Plan:** free
-- **Audit location in Render:** `/tmp/opsguard_audit.sqlite3`, selected with `OPSGUARD_DB_PATH`
-
-To deploy, create a new Render **Blueprint** from this GitHub repository and accept `render.yaml`. No API keys, model downloads, cloud credentials, or Decider server are required to start the app. Leave `STRANDS_DECIDER_URL` unset unless you independently run a compatible, reachable Decider service; the default local endpoint is not a hosted production dependency.
-
-### Live deployment
-
-Not deployed yet. Add the verified public Render URL here only after deployment succeeds.
-
-### Audit persistence caveat
-
-Render's free filesystem is ephemeral. Audit records stored in `/tmp/opsguard_audit.sqlite3` can disappear after a restart, redeploy, or instance replacement. This prototype does **not** provide persistent or tamper-evident audit storage. The safe next step for persistent production audit history is an approved managed database or append-only logging service with access controls; no paid storage is configured by this project.
-
-## Dashboard
-
-- **Security Overview:** real counts from the local audit database, risk distribution, Decider state, and recent events.
-- **Command Playground:** evaluates commands, presents policy reasons, requires exact resource confirmation for REVIEW, and records simulations only.
-- **Policy Details:** searchable rule metadata derived from the deterministic evaluator.
-- **Audit Explorer:** filters local records by decision, environment, text, and date; exports filtered CSV.
-- **System Status:** reports local capabilities and limitations without claiming cloud or cluster connectivity.
-
-To capture a screenshot for documentation, run the dashboard locally, select **Security Overview**, and use the browser's screenshot tool. Do not include commands containing credentials in screenshots or demo data.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    C[Proposed command] --> P[Conservative parser and deterministic policy]
-    P -->|Hard BLOCK| B[BLOCK: model is not called]
-    P -->|SAFE or REVIEW| D[Local POST /v1/systemone choice request]
-    D --> V[Validate choice, probabilities, confidence]
-    V --> F[Stricter of policy and Decider verdict]
-    F -->|REVIEW| A[Exact command + environment + resource approval]
-    F --> S[Simulation record only]
-```
-
-- `opsguard/safety_engine.py`: strict `shlex` parsing, explicit read-only allowlist, deterministic blocks, and fail-closed handling of shell syntax and unknown commands.
-- `opsguard/decider_client.py`: `STRANDS_DECIDER_URL` client for the typed `POST /v1/systemone` `choice` response, including its documented class probabilities and confidence.
-- `opsguard/decision_pipeline.py`: applies the hard deterministic floor, calls Decider only after that floor passes, and selects the strictest valid verdict.
-- `opsguard/approval.py`: command fingerprinting plus exact environment/resource binding for REVIEW approvals.
-- `opsguard/simulator.py`: creates messages only; it contains no process-execution call.
-- `opsguard/audit.py`: parameterized SQLite event log (`opsguard_audit.sqlite3`) with backward-compatible environment/resource migration, filtering, metrics, and common secret-assignment redaction.
-- `app.py`: enterprise-style Streamlit dashboard with sidebar navigation.
-
-## Local Decider decision flow
-
-For non-hard-blocked commands, OpsGuard asks the local Decider to choose exactly one of `safe`, `review`, or `block`. It accepts only a valid typed `choice` answer with all three probabilities summing to one and a documented `confidence` in `[0, 1]`. The displayed confidence is supplied by Decider; OpsGuard does not calibrate or manufacture it.
-
-Set `STRANDS_DECIDER_URL` to configure the service (default `http://127.0.0.1:8099`) and run a compatible local Strands Decider server separately. If its optional API-key protection is enabled, set `STRANDS_DECIDER_API_KEY`; OpsGuard sends it only as a Bearer authorization header and never writes it to the audit log. The upstream command is:
+## Terminal demo (no browser needed)
 
 ```bash
-~/cybershield-ai/.venv/bin/strands-decider serve StrandsAgents/strands-decider-2B-qwen3.5-v1-2610 --port 8099
+python demo_agent.py      # needs the Decider server and Bedrock configured (see below)
+```
+A Bedrock agent proposes commands, the gate checks each one, and approvals are typed in the
+terminal. Handy for recording the demo video.
+
+## Reusable pattern
+
+`decider_patterns/policy_gate/` is a small, app-independent copy of the pattern: a typed
+`choice` question (`policy_question.py`) and a Strands `InterventionHandler` (`policy_gate.py`).
+Copy it into your own agent; see [docs/DECISION_PATTERN.md](docs/DECISION_PATTERN.md).
+
+## Amazon Bedrock (optional)
+
+Bedrock powers (1) the **Agent Console** and (2) **Explain this decision**. It is **off by default**.
+
+```bash
+aws login                                   # or any standard AWS credential method
+export AWS_REGION=us-east-1
+export OPSGUARD_BEDROCK_ENABLED=true
+export OPSGUARD_BEDROCK_MODEL_ID=us.amazon.nova-micro-v1:0    # an ID your account can invoke
 ```
 
-It may download/load a large model, so it is intentionally not started by OpsGuard or this setup. With the server offline, OpsGuard records `DECIDER_OFFLINE` and applies the deterministic result: hard blocks still block and REVIEW still requires exact approval. A malformed Decider response is `DECIDER_INVALID` and fails closed to BLOCK. Offline mode never claims that a model decision was made.
+* `aws login` credentials need `botocore[crt]` (already in `requirements.txt`).
+* Credentials come from the standard AWS chain; nothing is stored in this repository.
+* **Minimum permission** for the explanation and agent calls: `bedrock:InvokeModel` on the
+  configured model (and its inference profile, if the ID starts with `us.` or `global.`).
+  See [docs/iam-policy.json](docs/iam-policy.json). OpsGuard makes no other AWS calls.
+* **Model access errors** (`AccessDenied`, "account is being verified") mean the account or model
+  is not yet enabled for Bedrock, not that OpsGuard is broken. New accounts can take a few hours.
+* **What is sent:** only sanitised decision context (command summary, verdict, rule IDs, reasons,
+  Decider vote, target names). Secrets are redacted first; if redaction cannot be confirmed, no
+  request is sent. Redaction is pattern-based and imperfect; do not paste secrets into OpsGuard.
+* **If Bedrock is off or fails** you get a clearly labelled template explanation (never marked as
+  AI), and the decision is unchanged. Statuses: `BEDROCK_DISABLED`, `BEDROCK_SUCCESS`,
+  `BEDROCK_UNAVAILABLE`, `BEDROCK_INVALID`, stored in the audit log as metadata only.
+* **Cost:** each explanation is one short request. Watch your AWS usage and set a budget alert.
 
-## Eligibility status
+## Audit log
 
-This repository is public and owned by the GitHub account shown in its remote. That does **not** verify ownership of any Builder Center listing, hackathon eligibility, organizer approval, submission deadline, or visibility requirement. No authoritative event rules or Builder Center record are stored in this repository. Confirm those details directly with the event organizer or Builder Center before submitting.
+Every decision is stored in SQLite (`OPSGUARD_DB_PATH`, default `./opsguard_audit.sqlite3`) with
+the command (secrets redacted), matched rules, Decider vote and confidence, latency, approval
+outcome, and Bedrock status. Prompts and model responses are never stored.
 
-## Security limitations
+## Evaluate it
 
-This is a prototype, not an execution system or production authorization control. The allowlist is intentionally small and unfamiliar commands block. New audit records redact common `token=`, `password=`, `secret=`, and `api_key=` assignments, but the redactor is not a substitute for secret scanning: do not paste credentials or private data. SQLite is local and not tamper-evident; use authenticated, append-only remote audit storage for production. Review approval is not authentication and does not replace organization-specific policy. This application has no AWS, Kubernetes, cloud-account, or command-execution integration.
+```bash
+python eval/run_eval.py --no-decider     # rules only, offline
+python eval/run_eval.py                  # needs the Decider server; writes eval/results/
+```
 
-## Testing
+`eval/commands.jsonl` holds 100 labelled commands (30 SAFE, 35 REVIEW, 35 BLOCK). The script
+compares rules only, Decider only, and the combined pipeline, and reports accuracy, the
+critical "unsafe-allow" count, over- and under-escalation, calibration by confidence, and latency.
+Add your measured table here before submitting.
+
+## Tests
 
 ```bash
 python -m pytest -q
-python -m compileall -q app.py opsguard tests
 ```
 
-The test suite covers deterministic decisions, shell-obfuscation blocks, valid/invalid Decider choice responses, strict verdict combination, offline fallback, approval binding, simulation-only behavior, and audit persistence/redaction. Streamlit may require a normal local terminal to bind its HTTP port.
+The suite is fully mocked: it makes no AWS calls and needs no model. A mocked test proves the
+code paths; it does not prove your AWS account works. Check that with the Agent Console or one
+`aws bedrock-runtime converse` call.
+
+## Limits
+
+Decider 2B is experimental and small. The labelled set is small. Pattern-based redaction misses
+some secrets. OpsGuard is a demonstration of a gating pattern and a simulator, not a production
+control. Keep a human in the loop and least-privilege credentials on anything real.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
