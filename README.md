@@ -43,6 +43,17 @@ agent / user command
 | What if the Decider is down or confused? | Known commands keep their rule verdict; unknown commands stay blocked. |
 | What does the agent do? | A Bedrock Strands agent proposes `run_command`; an `InterventionHandler` gates every call. |
 
+## What's allowed
+
+| Decision | What lands here |
+|---|---|
+| **SAFE** | Only commands on the explicit read-only allowlist (listing, describing, status, logs, `get`). |
+| **REVIEW** | Changes a person must approve by typing the exact resource name: Kubernetes changes, service control, permission changes, cloud operations, file writes, and Docker, Helm and Git changes (restart, run, upgrade, commit, push, merge). |
+| **BLOCK** | Destructive or dangerous commands, shell tricks, malformed input, and the AWS rules: bucket removal, recursive S3 deletes, `AdministratorAccess`, public ACLs, world-open security groups. Unknown commands are never SAFE. |
+
+Definitions live in code: `opsguard/safety_engine.py` (decision flow and the dashboard's policy
+table), `opsguard/known_commands.py` (read-only allowlist) and `opsguard/aws_rules.py` (AWS rules).
+
 ## Quick start (macOS)
 
 ```bash
@@ -58,6 +69,8 @@ streamlit run app.py
 
 Without the Decider, OpsGuard still works: known commands use the rules and unknown commands
 stay blocked. The dashboard's System Status page shows what is available.
+
+If the Decider reports `address already in use` on port 8099, it is already running. Leave it as is.
 
 ## Terminal demo (no browser needed)
 
@@ -115,7 +128,32 @@ python eval/run_eval.py                  # needs the Decider server; writes eval
 `eval/commands.jsonl` holds 100 labelled commands (30 SAFE, 35 REVIEW, 35 BLOCK). The script
 compares rules only, Decider only, and the combined pipeline, and reports accuracy, the
 critical "unsafe-allow" count, over- and under-escalation, calibration by confidence, and latency.
-Add your measured table here before submitting.
+Headline result on the 100 commands: rules 97%, Decider only 93%, combined 97%, latency about
+128 ms. Full numbers (written by `eval/run_eval.py`, committed in `eval/results/`):
+
+| mode | accuracy | unsafe-allow (BLOCK shown as SAFE) | under-escalated | over-cautious |
+|---|---|---|---|---|
+| rules | 97.0% | 0 | 0 | 3 |
+| decider_only | 93.0% | 1 | 3 | 4 |
+| combined | 97.0% | 0 | 0 | 3 |
+
+Decider latency: median 127.7 ms, p95 137.2 ms. Rules: median 0.0193 ms.
+
+### Read these caveats first
+
+* **Tuned on the same set.** I tightened the AWS rules and wrote the allowlist after seeing which
+  of the 100 commands failed. The 97% is **not** a held-out result and overstates performance on
+  unseen commands.
+* **One run on 100 commands**, so one command is one percentage point.
+* **The labels are my own judgement**, not an independent review.
+* **The Decider alone is not safe to rely on.** It let one BLOCK command through (item 99) and
+  under-escalated three, which is why a deterministic `BLOCK` always wins.
+* **Three over-cautious results are deliberate:** `cat /etc/hostname`, `terraform plan` and
+  `terraform show`. An unneeded confirmation costs less than a missed one.
+* **A fresh unseen set is still to do.** Until about 30 new commands are run once and reported
+  separately, treat 97% as an upper bound.
+
+Re-run the eval and re-commit `eval/results/` whenever rules or labels change.
 
 ## Tests
 
@@ -123,7 +161,7 @@ Add your measured table here before submitting.
 python -m pytest -q
 ```
 
-The suite is fully mocked: it makes no AWS calls and needs no model. A mocked test proves the
+The suite (231 tests) is fully mocked: it makes no AWS calls and needs no model. A mocked test proves the
 code paths; it does not prove your AWS account works. Check that with the Agent Console or one
 `aws bedrock-runtime converse` call.
 
@@ -132,6 +170,10 @@ code paths; it does not prove your AWS account works. Check that with the Agent 
 Decider 2B is experimental and small. The labelled set is small. Pattern-based redaction misses
 some secrets. OpsGuard is a demonstration of a gating pattern and a simulator, not a production
 control. Keep a human in the loop and least-privilege credentials on anything real.
+
+Evaluation limits: the 97% was tuned on the same 100 commands it is scored on, from a single run,
+with labels I wrote myself, so it is not a held-out measurement. The Decider alone let one BLOCK
+command through and under-escalated three. See "Evaluate it" for details.
 
 ## License
 
