@@ -5,6 +5,13 @@ from opsguard.audit import AuditLog
 from opsguard.decider_client import DeciderClient
 from opsguard.gate import OpsGuardGate
 
+import re
+
+
+def clean(reply):
+    return re.sub(r"<thinking>.*?</thinking>\s*", "", str(reply), flags=re.S).strip()
+
+
 gate = OpsGuardGate(DeciderClient(), audit=AuditLog())
 agent = build_agent(gate)
 
@@ -12,7 +19,7 @@ while True:
     prompt = input("\nYou> ").strip()
     if prompt.lower() in {"exit", "quit"}:
         break
-    print("\nAgent>", agent(prompt))
+    print("\nAgent>", clean(agent(prompt)))
     for req in gate.store.pending():
         print(f"\n[APPROVAL #{req.request_id}] {req.command}  env={req.environment}  resource={req.resource_name}")
         typed = input(f"Type '{req.resource_name}' to approve, or press Enter to reject: ")
@@ -25,4 +32,4 @@ while True:
         except ValueError as exc:
             print("Not approved:", exc)
             continue
-        print("\nAgent>", agent(f"A human approved request #{req.request_id}. Retry the same command exactly."))
+        print("\nAgent>", clean(agent(f"A human approved request #{req.request_id}. Retry the same command exactly.")))
