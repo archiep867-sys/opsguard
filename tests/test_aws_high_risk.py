@@ -23,7 +23,6 @@ def test_high_risk_aws_commands_are_blocked(command):
     "aws s3 rm s3://prod-data/one-file.txt",
     "aws s3api put-bucket-acl --bucket reports --acl private",
     "aws ec2 authorize-security-group-ingress --group-id sg-1 --protocol tcp --port 22 --cidr 10.0.0.0/8",
-    "aws ec2 describe-instances",
 ])
 def test_ordinary_aws_commands_keep_review(command):
     assert evaluate_command(command).decision is Decision.REVIEW

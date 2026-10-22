@@ -38,7 +38,7 @@ agent / user command
 | Question | Answer |
 |---|---|
 | Who decides? | Deterministic rules plus the Decider. Bedrock text is never parsed for decisions. |
-| Can the model make something SAFE? | No. Only the exact read-only allowlist is SAFE. |
+| Can the model make something SAFE? | No. Only the explicit read-only allowlist is SAFE. |
 | Can the model unblock a command? | Only an *unknown* command, to REVIEW, when confident. Destructive commands stay blocked. |
 | What if the Decider is down or confused? | Known commands keep their rule verdict; unknown commands stay blocked. |
 | What does the agent do? | A Bedrock Strands agent proposes `run_command`; an `InterventionHandler` gates every call. |

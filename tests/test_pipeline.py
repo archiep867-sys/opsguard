@@ -48,17 +48,17 @@ def test_invalid_response_blocks():
 
 @pytest.mark.parametrize("verdict", [Decision.SAFE, Decision.REVIEW])
 def test_unknown_command_never_becomes_safe(verdict):
-    result = decide("docker ps", Fake(verdict, 0.9), model_assist=True)
+    result = decide("nmap -sV localhost", Fake(verdict, 0.9), model_assist=True)
     assert result.final.decision is Decision.REVIEW
 
 
 def test_unknown_command_blocked_when_model_votes_block_or_offline_or_unsure():
-    assert decide("docker ps", Fake(Decision.BLOCK, 0.9), model_assist=True).final.decision is Decision.BLOCK
-    assert decide("docker ps", Fake(error=DeciderUnavailable("off")), model_assist=True).final.decision is Decision.BLOCK
-    assert decide("docker ps", Fake(Decision.SAFE, 0.2), model_assist=True, min_confidence=0.5).final.decision is Decision.BLOCK
+    assert decide("nmap -sV localhost", Fake(Decision.BLOCK, 0.9), model_assist=True).final.decision is Decision.BLOCK
+    assert decide("nmap -sV localhost", Fake(error=DeciderUnavailable("off")), model_assist=True).final.decision is Decision.BLOCK
+    assert decide("nmap -sV localhost", Fake(Decision.SAFE, 0.2), model_assist=True, min_confidence=0.5).final.decision is Decision.BLOCK
 
 
 def test_unknown_command_blocked_when_assist_disabled():
     client = Fake(Decision.SAFE)
-    assert decide("docker ps", client, model_assist=False).final.decision is Decision.BLOCK
+    assert decide("nmap -sV localhost", client, model_assist=False).final.decision is Decision.BLOCK
     assert client.calls == 0

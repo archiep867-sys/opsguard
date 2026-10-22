@@ -25,7 +25,7 @@ class Scripted:
         return DeciderResult(self.verdict, probs, self.confidence, 12.0, "scripted")
 
 
-UNKNOWN = "docker ps"
+UNKNOWN = "nmap -sV localhost"
 
 
 @pytest.mark.parametrize("vote", [Decision.SAFE, Decision.REVIEW])

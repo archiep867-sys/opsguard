@@ -13,7 +13,7 @@ CASES = [
     ("docker system prune -af", Decision.BLOCK),
     ("helm uninstall web", Decision.BLOCK),
     ("shutdown -h now", Decision.BLOCK),
-    ("docker ps", Decision.BLOCK),
+    ("nmap -sV localhost", Decision.BLOCK),
 ]
 
 

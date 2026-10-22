@@ -26,7 +26,7 @@ SCENARIOS = {
     "Delete a namespace": ("kubectl delete namespace production", "production", "production"),
     "Suspicious IAM change": ("aws iam attach-user-policy --user-name ci-bot --policy-arn arn:aws:iam::aws:policy/AdministratorAccess", "production", "ci-bot"),
     "Open an S3 bucket": ("aws s3api put-bucket-acl --bucket reports --acl public-read", "production", "reports"),
-    "Unknown tool (Decider triage)": ("docker ps", "staging", "docker"),
+    "Unknown tool (Decider triage)": ("nmap -sV localhost", "staging", "nmap"),
 }
 RISK_COLORS = {"SAFE": "#33c38e", "REVIEW": "#f6b84b", "BLOCK": "#ef6b73"}
 

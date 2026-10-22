@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 
 from .aws_rules import aws_high_risk
+from .known_commands import mutating_reason, read_only_reason
 
 
 class Decision(StrEnum):
@@ -40,6 +41,7 @@ _DESTRUCTIVE_PROGRAMS = {"dd", "wipefs", "shred", "fdisk", "parted", "shutdown",
 POLICY_RULES = (
     ("SAFE-001", "Explicit read-only allowlist", "SAFE", "Allows pwd, ls, and git status."),
     ("SAFE-002", "Read-only Kubernetes queries", "SAFE", "Allows kubectl get and kubectl describe."),
+    ("SAFE-003", "Extended read-only allowlist", "SAFE", "Allows kubectl logs/top, docker ps/images/logs, helm list/status, git log/diff/show, AWS describe-/list-/s3 ls, and basic host info."),
     ("BLOCK-001", "Shell syntax and obfuscation", "BLOCK", "Rejects chaining, pipes, redirects, substitutions, and control characters."),
     ("BLOCK-002", "Destructive operations", "BLOCK", "Rejects recursive deletion, Terraform destroy, Kubernetes deletion, destructive SQL, cloud deletion, disk/host wipe commands, force-push and hard reset, Docker prune, and Helm uninstall."),
     ("REVIEW-001", "State-changing operations", "REVIEW", "Requires review for Kubernetes changes, service control, permissions, cloud operations, and file writes."),
@@ -114,6 +116,13 @@ def evaluate_command(command: str) -> Evaluation:
         return Evaluation(command, normalized, Decision.SAFE, "read-only", ("Read-only Git status.",), 0.98, ("SAFE-001",))
     if program == "kubectl" and len(parts) >= 2 and parts[1] in {"get", "describe"}:
         return Evaluation(command, normalized, Decision.SAFE, "read-only", ("Read-only Kubernetes query.",), 0.95, ("SAFE-002",))
+
+    read_only = read_only_reason(parts, lower)
+    if read_only:
+        return Evaluation(command, normalized, Decision.SAFE, "read-only", (read_only,), 0.9, ("SAFE-003",))
+    changing = mutating_reason(lower)
+    if changing:
+        return Evaluation(command, normalized, Decision.REVIEW, "mutation", (changing,), 0.75, ("REVIEW-001",))
 
     if program == "kubectl" and len(parts) >= 2 and parts[1] in {"apply", "patch", "scale", "rollout", "edit"}:
         reason = f"Kubernetes {parts[1]} changes cluster state."

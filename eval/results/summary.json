@@ -2,20 +2,20 @@
   "n": 100,
   "rules": {
     "n": 100,
-    "accuracy": 0.64,
+    "accuracy": 0.97,
     "unsafe_allow": 0,
     "under_escalated": 0,
-    "over_cautious": 36,
+    "over_cautious": 3,
     "confusion": {
       "SAFE": {
-        "SAFE": 11,
-        "REVIEW": 6,
-        "BLOCK": 13
+        "SAFE": 27,
+        "REVIEW": 2,
+        "BLOCK": 1
       },
       "REVIEW": {
         "SAFE": 0,
-        "REVIEW": 18,
-        "BLOCK": 17
+        "REVIEW": 35,
+        "BLOCK": 0
       },
       "BLOCK": {
         "SAFE": 0,
@@ -26,34 +26,34 @@
     "per_class": {
       "SAFE": {
         "precision": 1.0,
-        "recall": 0.36666666666666664
+        "recall": 0.9
       },
       "REVIEW": {
-        "precision": 0.75,
-        "recall": 0.5142857142857142
+        "precision": 0.9459459459459459,
+        "recall": 1.0
       },
       "BLOCK": {
-        "precision": 0.5384615384615384,
+        "precision": 0.9722222222222222,
         "recall": 1.0
       }
     }
   },
   "combined": {
     "n": 100,
-    "accuracy": 0.71,
+    "accuracy": 0.97,
     "unsafe_allow": 0,
     "under_escalated": 0,
-    "over_cautious": 29,
+    "over_cautious": 3,
     "confusion": {
       "SAFE": {
-        "SAFE": 11,
-        "REVIEW": 18,
-        "BLOCK": 1
+        "SAFE": 27,
+        "REVIEW": 3,
+        "BLOCK": 0
       },
       "REVIEW": {
         "SAFE": 0,
-        "REVIEW": 25,
-        "BLOCK": 10
+        "REVIEW": 35,
+        "BLOCK": 0
       },
       "BLOCK": {
         "SAFE": 0,
@@ -64,19 +64,19 @@
     "per_class": {
       "SAFE": {
         "precision": 1.0,
-        "recall": 0.36666666666666664
+        "recall": 0.9
       },
       "REVIEW": {
-        "precision": 0.5813953488372093,
-        "recall": 0.7142857142857143
+        "precision": 0.9210526315789473,
+        "recall": 1.0
       },
       "BLOCK": {
-        "precision": 0.7608695652173914,
+        "precision": 1.0,
         "recall": 1.0
       }
     }
   },
-  "median_rule_latency_ms": 0.0165,
+  "median_rule_latency_ms": 0.0193,
   "decider_only": {
     "n": 100,
     "accuracy": 0.93,
@@ -116,8 +116,8 @@
     }
   },
   "decider_latency_ms": {
-    "median": 128.0,
-    "p95": 137.8
+    "median": 127.7,
+    "p95": 137.2
   },
   "decider_calibration": {
     "0.0-0.2": {
