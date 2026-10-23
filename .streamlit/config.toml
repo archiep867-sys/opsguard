@@ -6,3 +6,11 @@ gatherUsageStats = false
 
 [client]
 toolbarMode = "minimal"
+
+[theme]
+base = "dark"
+primaryColor = "#00ff9c"
+backgroundColor = "#050806"
+secondaryBackgroundColor = "#0a120d"
+textColor = "#c9f7d9"
+font = "monospace"

@@ -17,6 +17,7 @@ from opsguard.decider_client import DeciderClient
 from opsguard.decision_pipeline import PipelineDecision, decide
 from opsguard.safety_engine import Decision, Evaluation, POLICY_RULES
 from opsguard.simulator import simulate
+from opsguard.ui_theme import ASCII_LOGO, CSS, RISK_COLORS, bar_html, feed_html
 
 AUDIT = AuditLog()
 EXAMPLES = {"Read cluster pods": "kubectl get pods -n production", "Deploy workload": "kubectl apply -f deployment.yaml", "Delete files": "rm -rf /", "Inspect Git state": "git status"}
@@ -28,27 +29,19 @@ SCENARIOS = {
     "Open an S3 bucket": ("aws s3api put-bucket-acl --bucket reports --acl public-read", "production", "reports"),
     "Unknown tool (Decider triage)": ("nmap -sV localhost", "staging", "nmap"),
 }
-RISK_COLORS = {"SAFE": "#33c38e", "REVIEW": "#f6b84b", "BLOCK": "#ef6b73"}
 
 
 def _configure() -> None:
-    st.set_page_config(page_title="OpsGuard | Command Security", page_icon="OG", layout="wide")
-    st.markdown("""<style>
-    .stApp {background:#07111f;color:#e7edf7} [data-testid="stSidebar"] {background:#0a1829;border-right:1px solid #1e344d}
-    [data-testid="stSidebar"] * {color:#dce8f5}.og-kicker {color:#72d7ff;font-size:.78rem;font-weight:700;letter-spacing:.11em}
-    .og-title {font-size:2rem;font-weight:700;margin:0 0 .2rem}.og-subtitle,.og-muted {color:#a9bbcf;margin-bottom:1.3rem}
-    .og-card {background:#0d1d30;border:1px solid #1b3651;border-radius:10px;padding:1rem 1.1rem;min-height:96px}
-    .og-card-label {font-size:.75rem;color:#9bb0c7;letter-spacing:.06em;text-transform:uppercase}.og-card-value {font-size:1.7rem;font-weight:700;margin-top:.35rem}
-    .og-banner {background:#13263a;border:1px solid #2c5275;color:#cbe9ff;border-radius:8px;padding:.75rem 1rem;margin:.5rem 0 1rem}
-    .og-decision {border-radius:10px;padding:1rem 1.2rem;color:#07111f;font-weight:800;font-size:1.2rem}
-    div[data-testid="stDataFrame"] {border:1px solid #1b3651;border-radius:8px}</style>""", unsafe_allow_html=True)
+    st.set_page_config(page_title="OpsGuard | Command Security", page_icon=">_", layout="wide")
+    st.markdown(CSS, unsafe_allow_html=True)
 
 
 def _header(title: str, subtitle: str) -> None:
-    st.markdown('<div class="og-kicker">OPS GUARD · LOCAL CONTROL PLANE</div>', unsafe_allow_html=True)
+    slug = title.lower().replace(" ", "-")
+    st.markdown(f'<div class="og-prompt"><b>opsguard@control-plane</b>:~$ ./{slug}<span class="og-cursor"></span></div>', unsafe_allow_html=True)
     st.markdown(f'<div class="og-title">{title}</div>', unsafe_allow_html=True)
     st.markdown(f'<div class="og-subtitle">{subtitle}</div>', unsafe_allow_html=True)
-    st.markdown('<div class="og-banner">SIMULATION ONLY · No submitted command can execute from this application.</div>', unsafe_allow_html=True)
+    st.markdown('<div class="og-banner">SIMULATION ONLY // No submitted command can execute from this application.</div>', unsafe_allow_html=True)
 
 
 def _event_rows(events: list[AuditEvent]) -> list[dict[str, object]]:
@@ -65,19 +58,19 @@ def overview(client: DeciderClient) -> None:
     metrics = AUDIT.metrics()
     status, description = _status(client)
     columns = st.columns(5)
-    items = [("Audited evaluations", metrics["total"], "#dce8f5"), ("Safe", metrics["SAFE"], RISK_COLORS["SAFE"]), ("Review", metrics["REVIEW"], RISK_COLORS["REVIEW"]), ("Blocked", metrics["BLOCK"], RISK_COLORS["BLOCK"]), ("Local Decider", status.upper(), "#72d7ff")]
+    items = [("Audited evaluations", metrics["total"], "#c9f7d9"), ("Safe", metrics["SAFE"], RISK_COLORS["SAFE"]), ("Review", metrics["REVIEW"], RISK_COLORS["REVIEW"]), ("Blocked", metrics["BLOCK"], RISK_COLORS["BLOCK"]), ("Local Decider", status.upper(), "#3ddcff")]
     for column, (label, value, color) in zip(columns, items, strict=True):
         column.markdown(f'<div class="og-card"><div class="og-card-label">{label}</div><div class="og-card-value" style="color:{color}">{value}</div></div>', unsafe_allow_html=True)
     st.caption(description)
     left, right = st.columns((1, 2))
     with left:
         st.subheader("Risk distribution")
-        st.bar_chart(pd.DataFrame({"Events": [metrics["SAFE"], metrics["REVIEW"], metrics["BLOCK"]]}, index=["SAFE", "REVIEW", "BLOCK"]), color="#37a9d6", horizontal=True)
+        st.bar_chart(pd.DataFrame({"Events": [metrics["SAFE"], metrics["REVIEW"], metrics["BLOCK"]]}, index=["SAFE", "REVIEW", "BLOCK"]), color="#00ff9c", horizontal=True)
     with right:
         st.subheader("Recent security events")
         events = AUDIT.events(limit=8)
         if events:
-            st.dataframe(pd.DataFrame(_event_rows(events)), width="stretch", hide_index=True)
+            st.markdown(feed_html([(e.created_at.replace("T", " ")[:19], e.decision, e.command[:140]) for e in events]), unsafe_allow_html=True)
         else:
             st.info("No evaluations recorded. Use the Command Playground to create the first local audit event.")
 
@@ -97,10 +90,7 @@ def _confidence_panel(pipeline: PipelineDecision) -> None:
     st.markdown("**Strands Decider vote**")
     for label in ("safe", "review", "block"):
         value = pipeline.model_probabilities.get(label, 0.0)
-        color = RISK_COLORS[label.upper()]
-        st.markdown(f'<div style="display:flex;align-items:center;gap:.6rem;margin:.15rem 0"><span style="width:4.5rem;font-size:.8rem;color:#a9bbcf">{label.upper()}</span>'
-                    f'<div style="flex:1;background:#0d1d30;border-radius:6px;height:12px"><div style="width:{value * 100:.1f}%;background:{color};height:12px;border-radius:6px"></div></div>'
-                    f'<span style="width:3.2rem;text-align:right;font-size:.8rem">{value:.2f}</span></div>', unsafe_allow_html=True)
+        st.markdown(bar_html(label.upper(), value, RISK_COLORS[label.upper()]), unsafe_allow_html=True)
     latency = f"{pipeline.latency_ms:.0f} ms" if pipeline.latency_ms is not None else "n/a"
     st.caption(f"Confidence {pipeline.model_confidence:.2f} · Decider latency {latency} · measured on this machine")
 
@@ -153,7 +143,7 @@ def playground(client: DeciderClient) -> None:
     if not context_matches:
         st.warning("Command or target changed after evaluation. Re-evaluate before approval or simulation.")
         st.session_state["approval"] = None
-    st.markdown(f'<div class="og-decision" style="background:{RISK_COLORS[evaluation.decision.value]}">{evaluation.decision.value} · {evaluation.category.upper()}</div>', unsafe_allow_html=True)
+    st.markdown(f'<div class="og-decision" style="color:{RISK_COLORS[evaluation.decision.value]};border-color:{RISK_COLORS[evaluation.decision.value]};box-shadow:0 0 18px {RISK_COLORS[evaluation.decision.value]}55">{evaluation.decision.value} // {evaluation.category.upper()}</div>', unsafe_allow_html=True)
     one, two = st.columns((2, 1))
     with one:
         st.subheader("Decision details")
@@ -301,9 +291,9 @@ def system_status(client: DeciderClient) -> None:
 def main() -> None:
     _configure(); client = DeciderClient()
     with st.sidebar:
-        st.markdown("## OpsGuard"); st.caption("Command safety control plane")
+        st.markdown(ASCII_LOGO, unsafe_allow_html=True); st.caption("command safety control plane")
         page = st.radio("Navigation", ["Security Overview", "Command Playground", "Agent Console", "Policy Details", "Audit Explorer", "System Status"])
-        st.divider(); st.caption("Simulation-only prototype")
+        st.divider(); st.caption("[ simulation only ]")
     {"Security Overview": lambda: overview(client), "Command Playground": lambda: playground(client), "Agent Console": lambda: agent_console(client), "Policy Details": policy_details, "Audit Explorer": audit_explorer, "System Status": lambda: system_status(client)}[page]()
 
 
